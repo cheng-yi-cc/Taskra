@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="file" path="images" />
+    <exclude domain="file" path="camera" />
+    <exclude domain="database" path="taskra.db" />
+</full-backup-content>

@@ -1,0 +1,121 @@
+name: Release APK + Website
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的 tag（如 v1.0.0），用于重发 Release / 重部署官网"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode keystore
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > /tmp/taskra-release.jks
+          echo "TASKRA_KEYSTORE_FILE=/tmp/taskra-release.jks" >> "$GITHUB_ENV"
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+      - name: Build signed release APK
+        run: ./gradlew :app:assembleRelease --no-daemon
+        env:
+          TASKRA_KEYSTORE_FILE: ${{ env.TASKRA_KEYSTORE_FILE }}
+          TASKRA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          TASKRA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TASKRA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - name: Prepare artifacts
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          ls -lh "$APK"
+          mkdir -p dist
+          cp "$APK" "dist/taskra-${TAG}.apk"
+          cp "$APK" dist/taskra-latest.apk
+          (cd dist && sha256sum "taskra-${TAG}.apk" > "taskra-${TAG}.apk.sha256")
+
+      - name: Create GitHub Release (only on tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: |
+            dist/taskra-${{ env.TAG }}.apk
+            dist/taskra-${{ env.TAG }}.apk.sha256
+          generate_release_notes: true
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ env.TAG }}
+          path: dist/
+
+  deploy-pages:
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: apk-${{ env.TAG }}
+          path: dist/
+
+      - name: Assemble site bundle
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p deploy
+          cp site/index.html site/styles.css site/app.js deploy/
+          cp "dist/taskra-${TAG}.apk" deploy/
+          cp dist/taskra-latest.apk deploy/
+          cp "dist/taskra-${TAG}.apk.sha256" deploy/ 2>/dev/null || true
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SHA="$(cut -d ' ' -f1 < dist/taskra-${TAG}.apk.sha256 2>/dev/null || true)"
+          cat > deploy/version.json <<EOF
+          {
+            "version": "${TAG}",
+            "apk": "taskra-${TAG}.apk",
+            "latest": "taskra-latest.apk",
+            "sha256": "${SHA}",
+            "updated": "${DATE}",
+            "releaseUrl": "https://github.com/${REPO}/releases/tag/${TAG}"
+          }
+          EOF
+          ls -lh deploy/
+
+      - name: Deploy to Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy deploy --project-name=taskra --commit-dirty=true

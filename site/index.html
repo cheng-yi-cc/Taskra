@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>课迹 Taskra — 大学生的个人作业本</title>
+  <meta name="description" content="课迹 Taskra：本地优先的大学生个人作业本。记录课程作业，完成后按课程保存，期末重新练习。无账号、无服务器、无广告。仅提供 Android 版。">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <p class="brand">课迹 Taskra</p>
+      <h1>大学生的个人作业本</h1>
+      <p class="tagline">记录课程作业 → 查看未完成 → 完成后按课程保存 → 期末重新练习。</p>
+      <div class="download-card" id="download">
+        <p class="ver">当前版本 <strong id="version">读取中…</strong> · 仅 Android 版</p>
+        <a class="btn" id="downloadBtn" href="https://github.com/cheng-yi-cc/Taskra/releases">下载安装包（APK）</a>
+        <p class="meta" id="updated"></p>
+        <p class="meta mono" id="sha"></p>
+        <p class="meta">如果按钮尚未指向最新包，请前往 <a id="releaseLink" href="https://github.com/cheng-yi-cc/Taskra/releases">GitHub Releases</a> 手动下载。</p>
+      </div>
+    </header>
+
+    <section>
+      <h2>为什么用课迹</h2>
+      <ul class="points">
+        <li><strong>本地优先，离线可用</strong>——核心功能全部离线运行，无账号、无服务器、无广告、无埋点。</li>
+        <li><strong>流程简单</strong>——记作业、看未完成、做完归档到课程、期末拿出来重练。</li>
+        <li><strong>状态干净</strong>——作业只有「待办 / 已完成」两种状态，逾期由日期自动算出，不污染数据。</li>
+        <li><strong>备份放心</strong>——一键导出版本化备份包（含题目与图片），换机可恢复。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>主要功能</h2>
+      <ul class="points">
+        <li>按课程记录作业，支持截止日期与时间</li>
+        <li>待办列表一眼看清未完成作业</li>
+        <li>完成后按课程存档，复习时独立练习、不改原记录</li>
+        <li>题目支持富文本（加粗 / 高亮 / 标题）与图片</li>
+        <li>回收站误删可找回，学期归档整洁有序</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>安装方法</h2>
+      <ol class="steps">
+        <li>点击上方按钮下载 <code>.apk</code> 文件（需要 Android 8.0 及以上）。</li>
+        <li>在手机上打开该文件，允许「安装未知应用」后完成安装。</li>
+        <li>首次打开会自动建好默认学期，直接开始记作业。</li>
+      </ol>
+    </section>
+
+    <footer>
+      <p>课迹 Taskra · 开源协议 Apache-2.0 · <a href="https://github.com/cheng-yi-cc/Taskra">GitHub 仓库</a></p>
+    </footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
