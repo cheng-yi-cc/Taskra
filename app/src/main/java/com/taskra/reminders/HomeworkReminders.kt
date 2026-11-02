@@ -70,7 +70,7 @@ class HomeworkReminders(private val app: TaskraApp) {
         val homework = app.db.homeworkDao().listActive()
         val delivered = runCatching { Json.decodeFromString<Map<String, Long>>(state.getString("delivered", "{}")!!) }
             .getOrDefault(emptyMap()).filterValues { it > now }.toMutableMap()
-        val valid = if (prefs.remindersEnabled) homework.mapNotNull { reminderFor(it, prefs.reminderMinuteOfDay) }
+        val valid = if (prefs.remindersEnabled) homework.mapNotNull { reminderFor(it, prefs.reminderMinuteOfDay, prefs.reminderMode, prefs.reminderHours) }
             .filter { now >= it.at && now < it.expiresAt }.associate { it.homework.id to it.key } else emptyMap()
         notifications.activeNotifications.filter { it.notification.channelId == CHANNEL &&
             (it.tag !in valid || it.notification.extras.getString("reminder_key") != valid[it.tag]) }
@@ -80,7 +80,7 @@ class HomeworkReminders(private val app: TaskraApp) {
             for (reminder in plan.due) {
                 // 发送前再次核对，避免旧闹钟为已完成、已删除或刚改期限的作业发通知。
                 val latestPrefs = app.prefs.snapshot()
-                val latest = app.repo.getHomework(reminder.homework.id)?.let { reminderFor(it, latestPrefs.reminderMinuteOfDay) }
+                val latest = app.repo.getHomework(reminder.homework.id)?.let { reminderFor(it, latestPrefs.reminderMinuteOfDay, latestPrefs.reminderMode, latestPrefs.reminderHours) }
                 val sendNow = System.currentTimeMillis()
                 if (!latestPrefs.remindersEnabled || latest == null || latest.key != reminder.key ||
                     sendNow < latest.at || sendNow >= latest.expiresAt) continue
@@ -103,7 +103,7 @@ class HomeworkReminders(private val app: TaskraApp) {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val content = PendingIntent.getActivity(app, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val deadline = TimeUtils.formatDeadline(h.deadlineType, h.deadlineDate, h.deadlineTime, h.deadlineZoneId)
-        val text = "明天截止 · $deadline"
+        val text = "即将截止 · $deadline"
         val notification = NotificationCompat.Builder(app, CHANNEL)
             .setSmallIcon(R.drawable.ic_reminder)
             .setColor(0xFFB94335.toInt())

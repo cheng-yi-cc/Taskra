@@ -79,4 +79,24 @@ class ReminderPlanTest {
         assertTrue(old.remindersEnabled)
         assertEquals(540, old.reminderMinuteOfDay)
     }
+    @Test fun `提前时长模式依截止时刻计算并在截止前补发`() {
+        val timed = h.copy(deadlineType = DeadlineType.DATETIME, deadlineTime = "18:00")
+        val reminder = reminderFor(timed, 540, "BEFORE_DEADLINE", 6)!!
+        assertEquals(millis("2026-10-01T12:00:00+08:00"), reminder.at)
+        assertEquals(millis("2026-10-01T18:00:00+08:00"), reminder.expiresAt)
+        val selected = prefs.copy(reminderMode = "BEFORE_DEADLINE", reminderHours = 6)
+        assertEquals(1, planReminders(listOf(timed), selected, emptySet(), millis("2026-10-01T13:00:00+08:00")).due.size)
+        assertTrue(planReminders(listOf(timed), selected, emptySet(), millis("2026-10-01T18:00:00+08:00")).due.isEmpty())
+        assertNotEquals(reminder.key, reminderFor(timed.copy(deadlineTime = "19:00"), 540, "BEFORE_DEADLINE", 6)!!.key)
+    }
+
+    @Test fun `仅日期提前一天在前一天九点并保留设置`() {
+        val custom = prefs.copy(reminderMode = "BEFORE_DEADLINE", reminderHours = 24)
+        val reminder = reminderFor(h, 540, custom.reminderMode, custom.reminderHours)!!
+        assertEquals(millis("2026-09-30T09:00:00+08:00"), reminder.at)
+        assertEquals(millis("2026-10-02T00:00:00+08:00"), reminder.expiresAt)
+        assertEquals(custom, Json.decodeFromString<UserPrefs>(Json.encodeToString(custom)))
+        assertEquals("DAY_TIME", Json.decodeFromString<UserPrefs>("{}").reminderMode)
+    }
+
 }

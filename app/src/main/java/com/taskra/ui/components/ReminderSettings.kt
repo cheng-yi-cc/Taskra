@@ -46,7 +46,7 @@ fun ReminderPermissionPrompt(app: TaskraApp, enabled: Boolean, hasDeadline: Bool
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ReminderSettings(app: TaskraApp, vm: AppViewModel) {
     val prefs by vm.prefs.collectAsState()
@@ -93,22 +93,46 @@ fun ReminderSettings(app: TaskraApp, vm: AppViewModel) {
     }
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("截止前一天提醒", Modifier.weight(1f))
+            Text("作业截止提醒", Modifier.weight(1f))
             Switch(prefs.remindersEnabled, { enabled ->
                 scope.launch {
                     app.prefs.setRemindersEnabled(enabled)
                     if (enabled) requestNotificationAccess()
                 }
-            }, Modifier.testTag("reminders_enabled").semantics { contentDescription = "截止前一天提醒" })
+            }, Modifier.testTag("reminders_enabled").semantics { contentDescription = "作业截止提醒" })
         }
         if (prefs.remindersEnabled) {
-            Row(Modifier.fillMaxWidth().testTag("reminder_time").clickable { showTime = true }.padding(vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Text("提醒时间", Modifier.weight(1f))
-                Text("%02d:%02d".format(prefs.reminderMinuteOfDay / 60, prefs.reminderMinuteOfDay % 60),
+            Text("提醒方式", style = MaterialTheme.typography.bodySmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = prefs.reminderMode == "DAY_TIME",
+                    onClick = { scope.launch { app.prefs.setReminderMode("DAY_TIME") } },
+                    label = { Text("前一天指定时刻") }, modifier = Modifier.testTag("reminder_mode_day"))
+                FilterChip(selected = prefs.reminderMode == "BEFORE_DEADLINE",
+                    onClick = { scope.launch { app.prefs.setReminderMode("BEFORE_DEADLINE") } },
+                    label = { Text("提前指定时长") }, modifier = Modifier.testTag("reminder_mode_offset"))
+            }
+            if (prefs.reminderMode == "DAY_TIME") {
+                Row(Modifier.fillMaxWidth().testTag("reminder_time").clickable { showTime = true }.padding(vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("提醒时间", Modifier.weight(1f))
+                    Text("%02d:%02d".format(prefs.reminderMinuteOfDay / 60, prefs.reminderMinuteOfDay % 60),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(8.dp))
+                    Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
+                }
+            } else {
+                listOf(listOf(1 to "1小时", 6 to "6小时", 12 to "12小时"),
+                    listOf(24 to "1天", 48 to "2天", 72 to "3天", 168 to "7天")).forEach { options ->
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        options.forEach { (hours, label) ->
+                            FilterChip(selected = prefs.reminderHours == hours,
+                                onClick = { scope.launch { app.prefs.setReminderHours(hours) } },
+                                label = { Text(label) }, modifier = Modifier.testTag("reminder_hours_$hours"))
+                        }
+                    }
+                }
+                Text("仅设日期时，以截止日期当天 09:00 为基准。", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.width(8.dp))
-                Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
             }
             if (!allowed) {
                 Text("系统通知未开启", color = MaterialTheme.colorScheme.error)
@@ -142,7 +166,7 @@ fun ReminderSettings(app: TaskraApp, vm: AppViewModel) {
     }
     if (showRationale) AlertDialog(
         onDismissRequest = { showRationale = false }, title = { Text("开启作业提醒") },
-        text = { Text("允许系统通知后，可以收到截止前一天的作业提醒。") },
+        text = { Text("允许系统通知后，可以收到作业截止提醒。") },
         confirmButton = { TextButton(onClick = {
             showRationale = false
             app.reminders.permissionRequested = true

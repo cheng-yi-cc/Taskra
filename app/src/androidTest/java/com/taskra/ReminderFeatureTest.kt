@@ -73,8 +73,9 @@ class ReminderFeatureTest {
         runBlocking { app.prefs.setReminderTime(0); app.prefs.setRemindersEnabled(true) }
         refresh()
         val notification = active(id)!!
+        assertEquals(R.drawable.ic_reminder, notification.notification.smallIcon.resId)
         assertEquals(prefix, notification.notification.extras.getString("android.title"))
-        assertTrue(notification.notification.extras.getString("android.text")!!.contains("明天截止"))
+        assertTrue(notification.notification.extras.getString("android.text")!!.contains("即将截止"))
         manager.cancel(id, notification.id)
         refresh()
         assertNull("用户划掉后不应重复通知", active(id))
@@ -124,6 +125,13 @@ class ReminderFeatureTest {
         rule.onAllNodes(hasSetTextAction())[1].performTextReplacement("30")
         rule.onNodeWithTag("reminder_time_confirm").performClick()
         rule.waitUntil(10000) { runBlocking { app.prefs.snapshot().reminderMinuteOfDay == 630 } }
+        rule.onNodeWithTag("reminder_mode_offset").performClick()
+        rule.waitUntil(10000) { runBlocking { app.prefs.snapshot().reminderMode == "BEFORE_DEADLINE" } }
+        rule.onNodeWithTag("reminder_hours_6").performClick()
+        rule.waitUntil(10000) { runBlocking { app.prefs.snapshot().reminderHours == 6 } }
+        rule.onNodeWithTag("reminder_mode_day").performClick()
+        rule.waitUntil(10000) { runBlocking { app.prefs.snapshot().reminderMode == "DAY_TIME" } }
+        assertEquals(630, runBlocking { app.prefs.snapshot().reminderMinuteOfDay })
         rule.onNodeWithTag("reminders_enabled").performClick()
         rule.waitUntil(10000) { !runBlocking { app.prefs.snapshot().remindersEnabled } }
         rule.onNodeWithTag("reminder_time").assertDoesNotExist()

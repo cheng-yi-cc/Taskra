@@ -12,6 +12,7 @@ app/src/main/java/com/taskra/
   MainActivity.kt        三底部导航（待办/课程/设置）+ NavHost 路由
   TaskraApp.kt           Room / Repository / Prefs / ImageStore / BackupManager 组装
   data/                  Room 实体·DAO·Repository·备份·图片存储·偏好
+  reminders/             提醒规划、系统闹钟与通知
   util/                  时间工具（含可注入时钟）、排序、标题生成、富文本、主线程投递
   ui/
     AppViewModel.kt      全局偏好流、待办筛选状态、完成/撤销
@@ -98,10 +99,8 @@ DragOrderState 负责长按拖动、邻项换位和边缘滚动；LazyColumn 的
 
 ## 作业提醒
 
-ReminderPlan 是纯函数：TODO、deletedAt 为空且截止类型为 DATE/DATETIME 的正式作业，在 deadlineDate 前一天的用户所选时刻触发，沿用 deadlineZoneId。补发区间为触发时刻至截止日期零点（不含）；按作业 ID、截止日期与截止时区去重，同一期限修改提醒时刻不会重复响铃。
+ReminderPlan 使用作业保存的截止时区计算两种模式：默认在截止日前一自然日的指定时刻提醒；提前时长模式按具体截止时刻倒推，仅日期则以截止当天 09:00 为基准。前者在截止日零点结束补发，后者以真实截止边界结束补发。只处理未完成、未回收且有有效截止日期的正式作业。
 
-HomeworkReminders 在 Application 的 IO 协程中观察 Room 待办及 DataStore 偏好，互斥更新。只向 AlarmManager 登记下一次最早触发/失效清理，不对每份作业创建后台任务。接收闹钟时重新读取数据库及偏好，发送前再次核对；有精准闹钟授权时用 setExactAndAllowWhileIdle，否则用 setAndAllowWhileIdle。关闭、完成、软删除、修改期限会取消失效的系统通知与更新待触发闹钟。
+HomeworkReminders 在 Application 的 IO 协程中观察 Room 待办与 DataStore 偏好，互斥更新，只向 AlarmManager 登记下一次最早触发或清理。接收闹钟时重新读取数据并核对；有精确闹钟授权时使用 setExactAndAllowWhileIdle，否则使用 setAndAllowWhileIdle。完成、回收、修改期限或关闭提醒会取消失效通知。
 
-ReminderReceiver 为非导出组件，接受系统启动、应用更新、时间/时区与精准闹钟授权广播，以及明确指定组件的应用闹钟 PendingIntent。通过 goAsync 在 IO 上更新并最终 finish。通知点击使用不可变、按作业 URI 区分的 PendingIntent，由 MainActivity 在主线程导航到对应详情。
-
-UserPrefs 增加 remindersEnabled（默认 true）、reminderMinuteOfDay（默认 540），纳入 v4 备份且通过默认字段兼容旧备份，无 Room 迁移。已发送记录独立保存在 reminder_delivery SharedPreferences，保存至截止当天零点，避免启动或普通偏好变化重复发送；权限询问记录也独立保存。系统权限实时检查，不作为备份字段。
+UserPrefs 保存开关、模式、指定时刻和提前时长，均纳入 v4 备份；旧设置默认沿用前一天指定时刻模式。已发送记录独立保存在 reminder_delivery SharedPreferences，系统权限不进入备份。设备重启、更新、系统时间与时区改变后重新安排；强行停止应用后需重新打开。

@@ -27,9 +27,13 @@ data class UserPrefs(
     val listOrders: Map<String, List<String>> = emptyMap(),
     val remindersEnabled: Boolean = true,
     val reminderMinuteOfDay: Int = 9 * 60,
+    val reminderMode: String = "DAY_TIME",
+    val reminderHours: Int = 24,
 )
 
 class PrefsRepository(private val context: Context) {
+    private val K_REMINDER_MODE = stringPreferencesKey("reminder_mode")
+    private val K_REMINDER_HOURS = intPreferencesKey("reminder_hours")
     private val K_REMINDERS = booleanPreferencesKey("reminders_enabled")
     private val K_REMINDER_TIME = intPreferencesKey("reminder_minute_of_day")
     private val K_ORDERS = stringPreferencesKey("list_orders")
@@ -52,6 +56,8 @@ class PrefsRepository(private val context: Context) {
             listOrders = readOrders(p[K_ORDERS]),
             remindersEnabled = p[K_REMINDERS] ?: true,
             reminderMinuteOfDay = (p[K_REMINDER_TIME] ?: 540).coerceIn(0, 1439),
+            reminderMode = p[K_REMINDER_MODE]?.takeIf { it == "BEFORE_DEADLINE" } ?: "DAY_TIME",
+            reminderHours = (p[K_REMINDER_HOURS] ?: 24).coerceIn(1, 168),
         )
     }
 
@@ -67,6 +73,14 @@ class PrefsRepository(private val context: Context) {
     }
     suspend fun setRemindersEnabled(enabled: Boolean) {
         context.prefsStore.edit { it[K_REMINDERS] = enabled }
+    }
+    suspend fun setReminderMode(mode: String) {
+        require(mode in setOf("DAY_TIME", "BEFORE_DEADLINE"))
+        context.prefsStore.edit { it[K_REMINDER_MODE] = mode }
+    }
+    suspend fun setReminderHours(hours: Int) {
+        require(hours in setOf(1, 6, 12, 24, 48, 72, 168))
+        context.prefsStore.edit { it[K_REMINDER_HOURS] = hours }
     }
     suspend fun setReminderTime(minuteOfDay: Int) {
         require(minuteOfDay in 0..1439)
@@ -103,6 +117,8 @@ class PrefsRepository(private val context: Context) {
             listOrders = readOrders(p[K_ORDERS]),
             remindersEnabled = p[K_REMINDERS] ?: true,
             reminderMinuteOfDay = (p[K_REMINDER_TIME] ?: 540).coerceIn(0, 1439),
+            reminderMode = p[K_REMINDER_MODE]?.takeIf { it == "BEFORE_DEADLINE" } ?: "DAY_TIME",
+            reminderHours = (p[K_REMINDER_HOURS] ?: 24).coerceIn(1, 168),
         )
     }
 
@@ -117,6 +133,8 @@ class PrefsRepository(private val context: Context) {
             it[K_ORDERS] = Json.encodeToString(p.listOrders)
             it[K_REMINDERS] = p.remindersEnabled
             it[K_REMINDER_TIME] = p.reminderMinuteOfDay.coerceIn(0, 1439)
+            it[K_REMINDER_MODE] = if (p.reminderMode == "BEFORE_DEADLINE") p.reminderMode else "DAY_TIME"
+            it[K_REMINDER_HOURS] = p.reminderHours.coerceIn(1, 168)
         }
     }
 }
