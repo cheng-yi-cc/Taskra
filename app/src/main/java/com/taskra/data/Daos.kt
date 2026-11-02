@@ -28,9 +28,14 @@ interface SemesterDao {
 
 @Dao
 interface CourseDao {
-    @Query("SELECT * FROM courses WHERE semesterId=:semesterId ORDER BY createdAt ASC")
+    @Query("SELECT * FROM courses WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    fun observeTrash(): Flow<List<Course>>
+    @Query("DELETE FROM courses WHERE id=:id")
+    suspend fun deleteHard(id: String)
+
+    @Query("SELECT * FROM courses WHERE semesterId=:semesterId AND deletedAt IS NULL ORDER BY createdAt ASC")
     fun observeBySemester(semesterId: String): Flow<List<Course>>
-    @Query("SELECT * FROM courses ORDER BY createdAt ASC")
+    @Query("SELECT * FROM courses WHERE deletedAt IS NULL ORDER BY createdAt ASC")
     fun observeAll(): Flow<List<Course>>
     @Query("SELECT * FROM courses WHERE id=:id")
     suspend fun get(id: String): Course?
@@ -54,6 +59,9 @@ interface CourseDao {
 
 @Dao
 interface HomeworkDao {
+    @Query("SELECT * FROM homework WHERE courseId=:courseId")
+    suspend fun listAllByCourse(courseId: String): List<Homework>
+
     @Query("SELECT * FROM homework WHERE deletedAt IS NULL AND status='TODO' ORDER BY createdAt ASC")
     fun observeTodoAll(): Flow<List<Homework>>
     @Query("SELECT * FROM homework WHERE id=:id")
@@ -68,6 +76,8 @@ interface HomeworkDao {
     suspend fun listByCourse(courseId: String): List<Homework>
     @Query("SELECT * FROM homework WHERE semesterId=:semesterId AND courseId IS NULL AND deletedAt IS NULL ORDER BY createdAt ASC")
     fun observeUncat(semesterId: String): Flow<List<Homework>>
+    @Query("SELECT * FROM homework WHERE courseId IS NULL AND deletedAt IS NULL ORDER BY createdAt ASC")
+    fun observeUncatAll(): Flow<List<Homework>>
     @Query("SELECT * FROM homework WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun observeTrash(): Flow<List<Homework>>
     @Query("SELECT * FROM homework WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
@@ -94,6 +104,8 @@ interface ContentBlockDao {
     suspend fun upsertAll(blocks: List<ContentBlock>)
     @Query("SELECT DISTINCT imageId FROM content_blocks WHERE imageId IS NOT NULL")
     suspend fun allReferencedImageIds(): List<String>
+    @Query("SELECT DISTINCT audioId FROM content_blocks WHERE audioId IS NOT NULL")
+    suspend fun allReferencedAudioIds(): List<String>
 }
 
 @Dao
@@ -114,7 +126,7 @@ interface DraftDao {
     fun observe(id: String): Flow<EditorDraft?>
     @Query("SELECT * FROM editor_drafts WHERE id=:id")
     suspend fun get(id: String): EditorDraft?
-    @Query("SELECT * FROM editor_drafts ORDER BY updatedAt DESC")
+    @Query("SELECT * FROM editor_drafts WHERE id NOT LIKE 'template:%' ORDER BY updatedAt DESC")
     fun observeAll(): Flow<List<EditorDraft>>
     @Query("SELECT * FROM editor_drafts ORDER BY updatedAt DESC")
     suspend fun listAll(): List<EditorDraft>
@@ -126,6 +138,9 @@ interface DraftDao {
 
 @Dao
 interface ReviewDao {
+    @Query("DELETE FROM review_sessions WHERE courseId=:courseId")
+    suspend fun deleteByCourse(courseId: String)
+
     @Query("SELECT * FROM review_sessions WHERE courseId=:courseId AND status='ONGOING' ORDER BY createdAt DESC LIMIT 1")
     suspend fun ongoingForCourse(courseId: String): ReviewSession?
     @Query("SELECT * FROM review_sessions WHERE id=:id")

@@ -20,7 +20,7 @@ class BackupCodecTest {
     fun `manifest与data可序列化往返`() {
         val data = BackupData(
             semesters = listOf(Semester("s1", "2026 秋季")),
-            courses = listOf(Course("c1", "s1", "数学")),
+            courses = listOf(Course("c1", "s1", "数学", deletedAt = 1234L)),
             homework = listOf(Homework("h1", "s1", "c1", "作业1")),
             blocks = emptyList(),
             images = emptyList(),
@@ -42,6 +42,8 @@ class BackupCodecTest {
         val d2 = json.decodeFromString<BackupData>(bytes.toString(Charsets.UTF_8))
         assertEquals("先做好眼前这一件。", d2.prefs.mottoText)
         assertEquals("作业1", d2.homework.first().title)
+        assertEquals(1234L, d2.courses.first().deletedAt)
+        assertNull(json.decodeFromString<Course>("""{"id":"old","semesterId":"s1","name":"旧课程"}""").deletedAt)
     }
 
     @Test
@@ -56,5 +58,18 @@ class BackupCodecTest {
         assertEquals("[]", b.spanJson)
         assertEquals("QUESTION", b.region)
         assertEquals("TEXT", b.kind)
+        assertNull(b.audioId)
+        assertEquals(0L, b.audioDurationMs)
+    }
+
+    @Test
+    fun `录音草稿与正式内容往返保留时长及顺序`() {
+        val blocks = listOf(
+            com.taskra.data.BlockJson("t", "TEXT", "题目"),
+            com.taskra.data.BlockJson("a", "AUDIO", audioId = "recording-1", audioDurationMs = 3500),
+        )
+        assertEquals(blocks, com.taskra.data.decodeBlocks(com.taskra.data.encodeBlocks(blocks)))
+        val audio = ContentBlock("a", "h", kind = "AUDIO", position = 1, audioId = "recording-1", audioDurationMs = 3500)
+        assertEquals(audio, json.decodeFromString<ContentBlock>(json.encodeToString(audio)))
     }
 }

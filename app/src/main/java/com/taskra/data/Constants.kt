@@ -16,6 +16,7 @@ object BlockRegion {
 object BlockKind {
     const val TEXT = "TEXT"
     const val IMAGE = "IMAGE"
+    const val AUDIO = "AUDIO"
 }
 object ReviewResult {
     const val NONE = "NONE"
@@ -32,6 +33,7 @@ object ThemeMode {
     const val DARK = "DARK"
 }
 object SortMode {
+    const val MANUAL = "MANUAL"
     const val DEADLINE = "DEADLINE"
     const val NEWEST = "NEWEST"
     const val OLDEST = "OLDEST"

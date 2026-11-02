@@ -1,41 +1,38 @@
 package com.taskra.ui.components
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.taskra.data.DeadlineType
 import com.taskra.ui.TodoUiItem
-import com.taskra.ui.theme.AmberWarn
-import com.taskra.ui.theme.AmberWarnBg
-import com.taskra.ui.theme.BrandRed
+import com.taskra.ui.theme.NotebookHand
 import com.taskra.ui.theme.courseColor
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeworkCard(
     item: TodoUiItem,
@@ -44,126 +41,70 @@ fun HomeworkCard(
     onToggleDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .semantics { contentDescription = "作业：${item.h.title}" }
-            .clickable(onClick = onOpen),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    val title = item.h.title.ifBlank { "未命名作业" }
+    val summary = item.summary.trim()
+    // 自动标题是正文前 30 字，展示更完整的摘要；历史手写标题仍然保留。
+    val titlePrefix = title.removeSuffix("…").trim()
+    val summaryIncludesTitle = summary.isNotBlank() && titlePrefix.isNotBlank() && summary.startsWith(titlePrefix)
+    val mainText = if (summaryIncludesTitle) summary else title
+    val secondaryText = summary.takeIf { it.isNotBlank() && !summaryIncludesTitle && it != title }
+    val marker = courseColor(item.courseColor)
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < .5f
+    val markerText = lerp(marker, MaterialTheme.colorScheme.onSurface, if (isDark) .42f else .28f)
+
+    Surface(
+        modifier = modifier.fillMaxWidth().semantics { contentDescription = "作业：${item.h.title}" }.clickable(onClick = onOpen),
+        shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .90f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            // 完成按钮：独立触控区 48dp
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onToggleDone)
-                    .semantics { contentDescription = if (done) "恢复为未完成" else "标记完成" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (done) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
-                            else MaterialTheme.colorScheme.primaryContainer
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.Top) {
+            val ink = MaterialTheme.colorScheme.onSurface
+            val red = MaterialTheme.colorScheme.primary
+            IconButton(onClick = onToggleDone) {
+                Canvas(Modifier.size(25.dp).semantics { contentDescription = if (done) "恢复为未完成" else "标记完成" }) {
+                    val box = Path().apply {
+                        moveTo(2.dp.toPx(), 3.dp.toPx()); lineTo(size.width - 3.dp.toPx(), 1.dp.toPx())
+                        lineTo(size.width - 2.dp.toPx(), size.height - 3.dp.toPx())
+                        lineTo(3.dp.toPx(), size.height - 2.dp.toPx()); close()
+                    }
+                    drawPath(box, ink.copy(alpha = if (done) .38f else .68f), style = Stroke(1.15.dp.toPx()))
                     if (done) {
-                        Icon(Icons.Outlined.Check, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.55f))
-                        )
+                        val tick = Path().apply {
+                            moveTo(size.width * .2f, size.height * .47f)
+                            lineTo(size.width * .43f, size.height * .71f)
+                            lineTo(size.width * .98f, size.height * .1f)
+                        }
+                        drawPath(tick, red, style = Stroke(2.3.dp.toPx(), cap = StrokeCap.Round))
                     }
                 }
             }
-            Spacer(Modifier.width(4.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    item.h.title.ifBlank { "未命名作业" },
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (item.courseName != null) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(courseColor(item.courseColor).copy(alpha = 0.16f))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Text(
-                                item.courseName,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = courseColor(item.courseColor),
-                                maxLines = 1,
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Text("未分类", style = MaterialTheme.typography.labelLarge)
-                        }
-                        Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f).padding(start = 2.dp, top = 5.dp, end = 2.dp, bottom = 4.dp)) {
+                Text(mainText, style = MaterialTheme.typography.titleMedium.copy(fontFamily = NotebookHand, fontSize = 19.sp, lineHeight = 25.sp),
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (secondaryText != null) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(secondaryText, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = NotebookHand),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.height(5.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Box(Modifier.widthIn(max = 142.dp).clip(RoundedCornerShape(2.dp))
+                        .background(marker.copy(alpha = if (isDark) .25f else .17f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        Text(item.courseName ?: "未分类", style = MaterialTheme.typography.labelMedium,
+                            color = markerText, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    // 截止信息：逾期用琥珀/红字 + 图标位置区分，不整卡染色
-                    Text(
-                        item.dueText,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (item.overdue && !done) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (item.summary.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        item.summary,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (item.imageCount > 0) {
-                    Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Image, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("${item.imageCount} 张图片", style = MaterialTheme.typography.labelSmall)
+                    if (item.h.deadlineType != DeadlineType.NONE) {
+                        Text(item.dueText + if (item.overdue && !done) " · 已逾期" else "",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (item.overdue && !done) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
-                }
-                if (item.overdue && !done) {
-                    Spacer(Modifier.height(6.dp))
-                    Row {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(AmberWarnBg)
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Text("已逾期", style = MaterialTheme.typography.labelSmall, color = AmberWarn)
+                    if (item.imageCount > 0) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Icon(Icons.Outlined.Image, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${item.imageCount}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -173,6 +114,4 @@ fun HomeworkCard(
 }
 
 @Composable
-fun SectionGap() {
-    Spacer(Modifier.height(12.dp))
-}
+fun SectionGap() { Spacer(Modifier.height(16.dp)) }

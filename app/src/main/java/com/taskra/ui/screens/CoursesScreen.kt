@@ -1,5 +1,15 @@
 package com.taskra.ui.screens
 
+import com.taskra.ui.components.notebookPaper
+
+import androidx.compose.foundation.lazy.rememberLazyListState
+import com.taskra.ui.components.rememberDragOrder
+import com.taskra.ui.components.reorderItemModifier
+import com.taskra.util.ordered
+
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,7 +29,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -29,16 +38,17 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import com.taskra.ui.components.SwipeToTrash
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,9 +59,6 @@ import com.taskra.data.Course
 import com.taskra.data.Semester
 import com.taskra.data.Status
 import com.taskra.ui.AppViewModel
-import com.taskra.ui.components.HomeworkCard
-import com.taskra.ui.TodoUiItem
-import com.taskra.util.TimeUtils
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -68,12 +75,11 @@ fun CoursesScreen(
     val courses by vm.coursesAll.collectAsState()
     val prefs by vm.prefs.collectAsState()
     val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    var swipeReset by remember { mutableStateOf(0) }
     var showNewCourse by remember { mutableStateOf(false) }
     var newCourseName by remember { mutableStateOf("") }
     var newCourseError by remember { mutableStateOf<String?>(null) }
-    var newSemesterName by remember { mutableStateOf("") }
-    var showNewSemester by remember { mutableStateOf(false) }
-
     // 默认学期：当前学期偏好 → 第一个未归档 → 第一个
     val defaultSem = remember(semesters, prefs.currentSemesterId) {
         semesters.find { it.id == prefs.currentSemesterId }
@@ -90,51 +96,39 @@ fun CoursesScreen(
         }
     }
 
-    val semCourses = remember(courses, selectedSemId) {
-        courses.filter { it.semesterId == selectedSemId }
+    val listState = rememberLazyListState()
+    val sortedCourses = ordered(courses, prefs.listOrders["courses"].orEmpty()) { it.id }
+    val drag = rememberDragOrder(listState, sortedCourses.map { it.id }) { ids, rollback ->
+        vm.saveOrder("courses", ids) { rollback(); scope.launch { snackbar.showSnackbar("排序保存失败，请重试") } }
     }
+    val displayedCourses = ordered(sortedCourses, drag.ids) { it.id }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showNewCourse = true }) {
-                Icon(Icons.Outlined.Add, contentDescription = "新建课程")
-            }
+            com.taskra.ui.components.NotebookFab("新建课程", onClick = { showNewCourse = true })
         },
     ) { pad ->
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .padding(pad),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp, 12.dp, 16.dp, 96.dp),
+                .notebookPaper()
+                .padding(pad).testTag("courses_list"),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp, 16.dp, 24.dp, 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Text("课程档案", style = MaterialTheme.typography.titleLarge)
+                com.taskra.ui.components.NotebookHeading("课程")
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "按学期 → 课程 → 作业组织。完成作业只改变状态，不删除内容。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+
             }
-            item {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    semesters.forEach { s ->
-                        FilterChip(
-                            selected = selectedSemId == s.id,
-                            onClick = { selectedSemId = s.id },
-                            label = { Text((if (s.isArchived) "📦 " else "") + s.name) },
-                        )
-                    }
-                }
-                if (semesters.isEmpty()) Text("正在准备学期…")
-            }
-            items(semCourses, key = { it.id }) { c ->
-                CourseCard(app, c, onOpen = { onOpenCourse(c.id) })
+            items(displayedCourses, key = { it.id }) { c ->
+                SwipeToTrash(
+                    enabled = drag.dragging == null,
+                    modifier = reorderItemModifier(drag, c.id).testTag("swipe_course:${c.id}"), resetKey = swipeReset,
+                    onDelete = { vm.trashCourse(c.id) { swipeReset++; scope.launch { snackbar.showSnackbar("删除失败，请重试") } } },
+                ) { CourseCard(app, c, onOpen = { onOpenCourse(c.id) }) }
             }
             item {
                 // 未分类（按学期归属）
@@ -161,10 +155,6 @@ fun CoursesScreen(
                     if (newCourseError != null) {
                         Text(newCourseError!!, color = MaterialTheme.colorScheme.error)
                     }
-                    Text(
-                        "将创建在：${semesters.find { it.id == selectedSemId }?.name ?: "默认学期"}",
-                        style = MaterialTheme.typography.labelSmall,
-                    )
                 }
             },
             confirmButton = {
@@ -176,9 +166,9 @@ fun CoursesScreen(
                             newCourseError = "请输入课程名"
                             return@launch
                         }
-                        val dup = app.repo.findDuplicateCourse(semId, name)
+                        val dup = app.repo.db.courseDao().listAll().firstOrNull { it.name == name }
                         if (dup != null) {
-                            newCourseError = "该学期已存在同名课程「$name」，请换个名字或直接使用它"
+                            newCourseError = if (dup.deletedAt != null) "回收站中有同名课程，请先恢复或彻底删除" else "已存在同名课程「$name」"
                             return@launch
                         }
                         app.repo.saveCourse(
@@ -209,9 +199,9 @@ private fun CourseCard(app: TaskraApp, c: Course, onOpen: () -> Unit) {
     val done = total - undone
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(5.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(1.dp),
+        elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -230,7 +220,7 @@ private fun CourseCard(app: TaskraApp, c: Course, onOpen: () -> Unit) {
                 Text(c.name, style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "共 $total · 未完成 $undone · 已完成 $done" + if (!c.isActive) " · 已停用" else "",
+                    "$undone 项待办 · $done 项完成" + if (!c.isActive) " · 已停用" else "",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -241,17 +231,16 @@ private fun CourseCard(app: TaskraApp, c: Course, onOpen: () -> Unit) {
 
 @Composable
 private fun UncatCard(app: TaskraApp, semesterId: String, onOpenHomework: (String) -> Unit, onOpenUncat: (String) -> Unit) {
-    val todo by app.repo.observeTodo().collectAsState(initial = emptyList())
-    val uncat = remember(todo) { todo.filter { it.courseId == null && it.semesterId == semesterId } }
+    val uncat by app.repo.db.homeworkDao().observeUncatAll().collectAsState(initial = emptyList())
     if (uncat.isEmpty()) return
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onOpenUncat(semesterId) },
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(5.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(Modifier.padding(16.dp)) {
-            Text("未分类（本学期）", style = MaterialTheme.typography.titleMedium)
-            Text("${uncat.size} 项待办尚未归入课程，点击查看全部", style = MaterialTheme.typography.bodyMedium)
+            Text("未分类", style = MaterialTheme.typography.titleMedium)
+            Text("${uncat.size} 项作业", style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(8.dp))
             uncat.take(3).forEach { h ->
                 Text(

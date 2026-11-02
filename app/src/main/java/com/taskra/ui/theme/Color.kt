@@ -1,5 +1,7 @@
 package com.taskra.ui.theme
 
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 // 设计令牌（需求规格初值，可为可读性微调；禁止蓝紫主视觉）
@@ -42,6 +44,42 @@ val CoursePalette = listOf(
 )
 
 fun courseColor(index: Int): Color = CoursePalette[index.mod(CoursePalette.size)]
+
+/**
+ * 方格纸配色：纸面、格线、墨色、批注红。
+ *
+ * 格线只比纸面深一档，正文压在上面仍然清楚；深色模式换成暖灰纸，
+ * 格线同样是低对比度，避免满屏亮线。
+ */
+@Immutable
+data class NotebookColors(
+    val paper: Color,
+    val grid: Color,
+    val ink: Color,
+    val red: Color,
+    val paperSheet: Color,
+    val dark: Boolean,
+)
+
+val NotebookLight = NotebookColors(
+    paper = PageBackground,
+    grid = Color(0xFFE2DBD0),
+    ink = InkColor,
+    red = BrandRed,
+    paperSheet = CardBackground,
+    dark = false,
+)
+
+val NotebookDark = NotebookColors(
+    paper = TaskraDark.PageBg,
+    grid = Color(0xFF3B3530),
+    ink = TaskraDark.Ink,
+    red = TaskraDark.Brand,
+    paperSheet = TaskraDark.CardBg,
+    dark = true,
+)
+
+val LocalNotebook = staticCompositionLocalOf { NotebookLight }
 
 // 深色模式色板：暖灰底 + 同一品牌红（降亮度保对比度）
 object TaskraDark {

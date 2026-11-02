@@ -2,6 +2,8 @@ package com.taskra
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -109,7 +111,8 @@ class TaskraFlowTest {
     }
 
     @Test
-    fun fullFlow_create_complete_review() {
+    fun fullFlow_create_complete_courseArchive() {
+        kotlinx.coroutines.runBlocking { (rule.activity.application as TaskraApp).repo.deleteDraft("new") }
         // 0. 自励区存在（默认示例或用户文字）
         rule.onNodeWithContentDescription("编辑给自己的话").assertIsDisplayed()
 
@@ -127,16 +130,16 @@ class TaskraFlowTest {
 
         // 2. 进入课程，新建作业（自动带入课程+学期）
         rule.onNodeWithText(courseName).performClick()
-        waitForText("重新练习本课程作业")
+        rule.waitUntil(8000) { contentDescExists("在此课程新建作业") }
         rule.onNodeWithContentDescription("在此课程新建作业").performClick()
-        rule.onNodeWithTag("editor_title").performTextInput(hwTitle)
+        rule.onNodeWithTag("editor_title").assertDoesNotExist()
         // 题目文字块：第一个题目输入框
-        rule.onAllNodesWithTag("question_text")[0].performTextInput("第一段题目要求")
+        rule.onAllNodesWithTag("question_text")[0].performTextInput(hwTitle + "\n第一段题目要求")
         // 选课程：已自动带入，确认显示课程名即可
-        rule.onNodeWithText("课程：$courseName", useUnmergedTree = true).assertExists()
-        rule.onNodeWithContentDescription("保存").performClick()
+        rule.onNodeWithText(courseName, useUnmergedTree = true).assertExists()
+        rule.onNodeWithContentDescription("确定").performClick()
         // 保存后经主线程返回课程详情
-        waitForText("重新练习本课程作业")
+        rule.waitUntil(8000) { contentDescExists("在此课程新建作业") }
         // 课程详情页无底部导航，先返回课程列表
         rule.onNodeWithContentDescription("返回").performClick()
         rule.waitUntil(8000) {
@@ -150,7 +153,7 @@ class TaskraFlowTest {
         scrollUntilCard("todo_list", "作业：$hwTitle")
 
         // 4. 标记完成 → 待办消失
-        rule.onNodeWithContentDescription("标记完成").performClick()
+        rule.onNode(hasContentDescription("标记完成") and hasAnyAncestor(hasContentDescription("作业：$hwTitle"))).performClick()
         rule.waitUntil(8000) { !contentDescExists("作业：$hwTitle") }
 
         // 5. 课程档案默认“已完成”保留该作业
@@ -159,14 +162,10 @@ class TaskraFlowTest {
         rule.onNodeWithText(courseName).performClick()
         scrollUntilCard("course_list", "作业：$hwTitle")
 
-        // 6. 重新练习：只看题目，标记“这次会做了”，进度 1/1
-        rule.onNodeWithText("重新练习本课程作业").performClick()
-        dumpTexts("after-open-review")
-        waitForText("第一段题目要求")
-        rule.onNodeWithText("第一段题目要求", useUnmergedTree = true).assertIsDisplayed()
-        rule.onNodeWithText("这次会做了").performClick()
-        waitForText("本轮已练1/1项，其中0项还需要再练。")
-        rule.onNodeWithText("本轮已练1/1项，其中0项还需要再练。").assertIsDisplayed()
+        // 6. 课程档案默认展示全部，复习入口已移除。
+        rule.onNodeWithText("开始复习").assertDoesNotExist()
+        rule.onNodeWithContentDescription("筛选课程作业").assertIsDisplayed()
+
     }
 
     @Test

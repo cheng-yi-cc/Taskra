@@ -34,6 +34,8 @@ data class Course(
     val colorIndex: Int = 0,
     val isActive: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
+    val deletedAt: Long? = null,
+    val templateJson: String? = null,
 )
 
 @Entity(
@@ -83,6 +85,8 @@ data class ContentBlock(
     val imageId: String? = null,
     /** 富文本标记 JSON（List<SpanMark>）：加粗/高亮/标题级别；纯文本为空数组。 */
     val spanJson: String = "[]",
+    val audioId: String? = null,
+    @androidx.room.ColumnInfo(defaultValue = "0") val audioDurationMs: Long = 0,
 )
 
 @Entity(tableName = "image_assets")

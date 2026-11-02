@@ -91,13 +91,30 @@ fun toggleMark(
         it.type == type && (if (type == SpanType.HEADING) it.level == level else true) &&
             it.start <= s && it.end >= e
     }
-    val rest = spans.filterNot { it in covering || (it.type == type && rangesOverlap(it.start, it.end, s, e)) }
+    val rest = clearMark(spans, type, range)
     return if (covering.isNotEmpty()) {
         rest
     } else {
         rest + SpanMark(type, s, e, level)
     }
 }
+
+/** 只清除选区里的格式，选区两侧的格式保留。 */
+fun clearMark(spans: List<SpanMark>, type: String, range: IntRange): List<SpanMark> {
+    if (range.isEmpty()) return spans
+    val start = range.first
+    val end = range.last + 1
+    return spans.flatMap { mark ->
+        if (mark.type != type || !rangesOverlap(mark.start, mark.end, start, end)) listOf(mark)
+        else buildList {
+            if (mark.start < start) add(mark.copy(end = start))
+            if (mark.end > end) add(mark.copy(start = end))
+        }
+    }
+}
+
+fun setMark(spans: List<SpanMark>, type: String, level: Int, range: IntRange): List<SpanMark> =
+    if (range.isEmpty()) spans else clearMark(spans, type, range) + SpanMark(type, range.first, range.last + 1, level)
 
 private fun rangesOverlap(aStart: Int, aEnd: Int, bStart: Int, bEnd: Int): Boolean =
     maxOf(aStart, bStart) < minOf(aEnd, bEnd)
@@ -152,7 +169,6 @@ fun buildAnnotated(
                         2 -> 1.2f
                         else -> 1.1f
                     },
-                    fontWeight = FontWeight.SemiBold,
                 )
                 else -> return@forEach
             }

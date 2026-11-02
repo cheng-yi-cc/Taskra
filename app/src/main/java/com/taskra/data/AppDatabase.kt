@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
         Semester::class, Course::class, Homework::class, ContentBlock::class,
         ImageAsset::class, EditorDraft::class, ReviewSession::class, ReviewItem::class,
     ],
-    version = 2,
+    version = 5,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

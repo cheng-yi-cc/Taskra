@@ -1,5 +1,30 @@
 package com.taskra.ui.screens
 
+import com.taskra.ui.components.notebookPaper
+
+import androidx.compose.foundation.lazy.rememberLazyListState
+import com.taskra.ui.components.rememberDragOrder
+import com.taskra.ui.components.reorderItemModifier
+import com.taskra.util.ordered
+
+
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import com.taskra.ui.components.SwipeToTrash
+import com.taskra.ui.components.TileDismiss
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Drafts
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Badge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,7 +39,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,18 +68,19 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.taskra.TaskraApp
@@ -81,7 +106,6 @@ fun TodoScreen(
     val prefs by vm.prefs.collectAsState()
     val todoAll by vm.todoAll.collectAsState()
     val courses by vm.coursesAll.collectAsState()
-    val semesters by vm.semesters.collectAsState()
     val query by vm.query.collectAsState()
     val filterCourse by vm.filterCourseId.collectAsState()
     val filterDue by vm.filterDue.collectAsState()
@@ -118,7 +142,7 @@ fun TodoScreen(
                     .mapNotNull { it.text }.filter { it.isNotBlank() }
                 val first = texts.firstOrNull()?.take(80) ?: ""
                 val imgs = bl.count { it.kind == "IMAGE" }
-                val label = if (first.isBlank() && imgs > 0) "图片作业" else first
+                val label = if (first.isBlank() && imgs > 0) "图片作业" else if (first.isBlank() && bl.any { it.kind == "AUDIO" }) "录音作业" else first
                 map[h.id] = label to imgs
                 search[h.id] = (listOf(h.title) + texts).joinToString("\n")
             } catch (_: Exception) { }
@@ -130,8 +154,8 @@ fun TodoScreen(
     val filtered = remember(todoAll, courses, query, filterCourse, filterDue, filterSem, summaries, searchTexts) {
         filterTodo(todoAll, courseMap, query, filterCourse, filterDue, filterSem, summaries, searchTexts)
     }
-    val sorted = remember(filtered, prefs.sortMode) {
-        HomeworkSort.sort(filtered, prefs.sortMode)
+    val sorted = remember(filtered, prefs.sortMode, prefs.listOrders) {
+        if (prefs.sortMode == SortMode.MANUAL) ordered(filtered, prefs.listOrders["todo"].orEmpty()) { it.id } else HomeworkSort.sort(filtered, prefs.sortMode)
     }
     val todoItems = remember(sorted) {
         sorted.map { h ->
@@ -161,58 +185,65 @@ fun TodoScreen(
     var mottoDraft by remember { mutableStateOf(prefs.mottoText) }
     var mottoExpanded by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
+    var showFilters by remember { mutableStateOf(false) }
+    var draftQuery by remember { mutableStateOf("") }
+    var draftCourse by remember { mutableStateOf<String?>(null) }
+    var draftDue by remember { mutableStateOf("ALL") }
+    var draftSort by remember { mutableStateOf(prefs.sortMode) }
+    var swipeReset by remember { mutableStateOf(0) }
+    val outgoing = remember { mutableStateMapOf<String, Pair<TodoUiItem, Int>>() }
+    val animationFinished = remember { mutableStateMapOf<String, Boolean>() }
+    LaunchedEffect(todoAll, animationFinished.toMap()) {
+        outgoing.keys.toList().forEach { id ->
+            if (animationFinished[id] == true && todoAll.none { it.id == id }) {
+                outgoing.remove(id)
+                animationFinished.remove(id)
+            }
+        }
+    }
+    val visibleItems = todoItems.filterNot { outgoing.containsKey(it.h.id) }.toMutableList().apply {
+        outgoing.values.sortedBy { it.second }.forEach { (item, index) -> add(index.coerceIn(0, size), item) }
+    }
+
+    val listState = rememberLazyListState()
+    val drag = rememberDragOrder(listState, visibleItems.map { it.h.id }) { ids, rollback ->
+        vm.saveOrder("todo", ids) { rollback(); scope.launch { snackbar.showSnackbar("排序保存失败，请重试") } }
+    }
+    val displayedItems = ordered(visibleItems, drag.ids) { it.h.id }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onNewHomework,
-                modifier = Modifier.padding(bottom = 8.dp),
-            ) {
-                Icon(Icons.Outlined.Add, contentDescription = "新建作业")
-            }
+            com.taskra.ui.components.NotebookFab("新建作业", onNewHomework)
         },
     ) { pad ->
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
+                .notebookPaper()
                 .padding(pad)
                 .testTag("todo_list"),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp
+                start = 24.dp, end = 24.dp, top = 20.dp, bottom = 96.dp
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // 标题与搜索入口
             item {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("待办", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { showSearch = !showSearch }) {
-                        Icon(Icons.Outlined.Search, contentDescription = "搜索")
+                    com.taskra.ui.components.NotebookHeading("待办", Modifier.weight(1f))
+                    IconButton(onClick = onOpenDrafts) {
+                        BadgedBox(badge = { if (drafts.isNotEmpty()) Badge { Text("${drafts.size}") } }) {
+                            Icon(Icons.Outlined.Drafts, "草稿箱")
+                        }
                     }
-                }
-                if (showSearch) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { vm.query.value = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("搜索标题、题目、解答、课程名") },
-                        singleLine = true,
-                        trailingIcon = {
-                            if (query.isNotEmpty()) {
-                                IconButton(onClick = { vm.query.value = "" }) {
-                                    Icon(Icons.Outlined.Close, contentDescription = "清除搜索")
-                                }
-                            }
-                        },
-                    )
-                    Text(
-                        "仅搜索文字，不识别图片中的文字",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    IconButton(onClick = { draftCourse = filterCourse; draftDue = filterDue; draftSort = prefs.sortMode; showFilters = true }) {
+                        Icon(Icons.Outlined.Tune, "筛选与排序", tint = if (filterActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    }
+                    IconButton(onClick = { draftQuery = query; showSearch = true }) {
+                        Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = if (query.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    }
                 }
             }
 
@@ -230,22 +261,95 @@ fun TodoScreen(
 
             // 待办数量和截止概览
             item {
-                val label = if (filtering) "筛选结果 ${todoItems.size} 项（共 ${todoAll.size} 项待办）"
-                else "共 ${todoAll.size} 项待办" + if (overdueCount > 0) "，其中 $overdueCount 项已逾期" else ""
+                val label = if (filtering) "${todoItems.size} 项结果"
+                else "${todoAll.size} 项待办" + if (overdueCount > 0) " · $overdueCount 项逾期" else ""
                 Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (drafts.isNotEmpty()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "有 ${drafts.size} 份草稿未提交 →",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable(onClick = onOpenDrafts),
-                    )
-                }
             }
 
-            // 筛选与排序
-            item {
+            // 作业列表
+            if (visibleItems.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            if (filtering) "暂无结果"
+                            else "暂无待办",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            } else {
+                items(displayedItems, key = { it.h.id }) { item ->
+                    SwipeToTrash(
+                        resetKey = swipeReset, enabled = !outgoing.containsKey(item.h.id) && drag.dragging == null,
+                        modifier = reorderItemModifier(drag, item.h.id, outgoing.isEmpty()).testTag("swipe_homework:${item.h.id}"),
+                        onDelete = { vm.trashHomework(item.h.id) { swipeReset++; scope.launch { snackbar.showSnackbar("删除失败，请重试") } } },
+                    ) {
+                    TileDismiss(
+                        removing = outgoing.containsKey(item.h.id),
+                        onFinished = { animationFinished[item.h.id] = true },
+                    ) {
+                        HomeworkCard(
+                            item = item,
+                            onOpen = { if (!outgoing.containsKey(item.h.id)) onOpenHomework(item.h.id) },
+                            onToggleDone = {
+                                if (!outgoing.containsKey(item.h.id)) {
+                                    outgoing[item.h.id] = item to visibleItems.indexOf(item)
+                                    vm.complete(item.h.id) {
+                                        outgoing.remove(item.h.id)
+                                        animationFinished.remove(item.h.id)
+                                        scope.launch { snackbar.showSnackbar("未能保存完成状态，请重试") }
+                                    }
+                                }
+                            },
+                        )
+                    }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showSearch) {
+        val focus = remember { FocusRequester() }
+        var focusRequested by remember { mutableStateOf(false) }
+        fun applySearch() { vm.query.value = draftQuery; showSearch = false }
+        AlertDialog(
+            modifier = Modifier.testTag("search_dialog"),
+            onDismissRequest = { showSearch = false },
+            title = { Text("搜索") },
+            text = {
+                OutlinedTextField(
+                    value = draftQuery, onValueChange = { draftQuery = it },
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag("search_field")
+                        .onGloballyPositioned {
+                            if (!focusRequested) { focusRequested = true; focus.requestFocus() }
+                        },
+                    placeholder = { Text("搜索作业") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { applySearch() }),
+                    trailingIcon = { if (draftQuery.isNotEmpty()) IconButton(onClick = { draftQuery = "" }) {
+                        Icon(Icons.Outlined.Close, "清除搜索")
+                    } },
+                )
+            },
+            confirmButton = { TextButton(onClick = { applySearch() }) { Text("搜索") } },
+            dismissButton = { TextButton(onClick = { showSearch = false }) { Text("取消") } },
+        )
+    }
+    if (showFilters) {
+        AlertDialog(
+            modifier = Modifier.testTag("filter_dialog"),
+            onDismissRequest = { showFilters = false },
+            title = { Text("筛选与排序") },
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) {
                 // 课程筛选
                 Text("课程", style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.height(6.dp))
@@ -254,19 +358,19 @@ fun TodoScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     FilterChip(
-                        selected = filterCourse == null,
-                        onClick = { vm.filterCourseId.value = null },
+                        selected = draftCourse == null,
+                        onClick = { draftCourse = null },
                         label = { Text("全部课程") },
                     )
                     FilterChip(
-                        selected = filterCourse == "UNCAT",
-                        onClick = { vm.filterCourseId.value = "UNCAT" },
+                        selected = draftCourse == "UNCAT",
+                        onClick = { draftCourse = "UNCAT" },
                         label = { Text("未分类") },
                     )
                     courses.forEach { c ->
                         FilterChip(
-                            selected = filterCourse == c.id,
-                            onClick = { vm.filterCourseId.value = c.id },
+                            selected = draftCourse == c.id,
+                            onClick = { draftCourse = c.id },
                             label = { Text(c.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         )
                     }
@@ -284,19 +388,18 @@ fun TodoScreen(
                     )
                     opts.forEach { (v, label) ->
                         FilterChip(
-                            selected = filterDue == v,
-                            onClick = { vm.filterDue.value = v },
+                            selected = draftDue == v,
+                            onClick = { draftDue = v },
                             label = { Text(label) },
                         )
                     }
                 }
-                if (filterActive) {
+                if ((draftCourse != null || draftDue != "ALL")) {
                     Spacer(Modifier.height(6.dp))
                     AssistChip(
                         onClick = {
-                            vm.filterCourseId.value = null
-                            vm.filterDue.value = "ALL"
-                            vm.filterSemesterId.value = null
+                            draftCourse = null
+                            draftDue = "ALL"
                         },
                         label = { Text("清除筛选") },
                     )
@@ -304,62 +407,21 @@ fun TodoScreen(
                 Spacer(Modifier.height(8.dp))
                 Text("排序", style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.height(6.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    SegmentedButton(
-                        selected = prefs.sortMode == SortMode.DEADLINE,
-                        onClick = { vm.setSort(SortMode.DEADLINE) },
-                        shape = SegmentedButtonDefaults.itemShape(0, 3),
-                    ) { Text("截止优先", maxLines = 1) }
-                    SegmentedButton(
-                        selected = prefs.sortMode == SortMode.NEWEST,
-                        onClick = { vm.setSort(SortMode.NEWEST) },
-                        shape = SegmentedButtonDefaults.itemShape(1, 3),
-                    ) { Text("最新记录", maxLines = 1) }
-                    SegmentedButton(
-                        selected = prefs.sortMode == SortMode.OLDEST,
-                        onClick = { vm.setSort(SortMode.OLDEST) },
-                        shape = SegmentedButtonDefaults.itemShape(2, 3),
-                    ) { Text("最早记录", maxLines = 1) }
-                }
-            }
-
-            // 作业列表
-            if (todoItems.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            if (filtering) "筛选结果为空，换个条件试试"
-                            else "太棒了，没有待办作业\n去记录一项新的作业吧",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(SortMode.MANUAL to "手动排序", SortMode.DEADLINE to "截止优先", SortMode.NEWEST to "最新记录", SortMode.OLDEST to "最早记录").forEach { (mode, label) ->
+                        FilterChip(selected = draftSort == mode, onClick = { draftSort = mode }, label = { Text(label) })
                     }
                 }
-            } else {
-                items(todoItems, key = { it.h.id }) { item ->
-                    HomeworkCard(
-                        item = item,
-                        onOpen = { onOpenHomework(item.h.id) },
-                        onToggleDone = {
-                            vm.complete(item.h.id) { cname ->
-                                scope.launch {
-                                    val msg = if (cname != null) "已完成，已保留在${cname}中。" else "已完成。"
-                                    val r = snackbar.showSnackbar(msg, actionLabel = "撤销", withDismissAction = true)
-                                    if (r == SnackbarResult.ActionPerformed) vm.undoComplete(item.h.id)
-                                }
-                            }
-                        },
-                    )
-                }
-            }
-        }
+            } },
+            confirmButton = { TextButton(onClick = {
+                vm.filterCourseId.value = draftCourse
+                vm.filterDue.value = draftDue
+                vm.filterSemesterId.value = null
+                vm.setSort(draftSort)
+                showFilters = false
+            }) { Text("应用") } },
+            dismissButton = { TextButton(onClick = { showFilters = false }) { Text("取消") } },
+        )
     }
 
     if (showMottoEdit) {
@@ -405,11 +467,14 @@ private fun MottoCard(
     onToggleExpand: () -> Unit,
     onEdit: () -> Unit,
 ) {
+    val marginInk = MaterialTheme.colorScheme.primary
+    var clipped by remember(text) { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f))
+            .clip(RoundedCornerShape(5.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = .90f))
+            .drawBehind { drawLine(marginInk, Offset.Zero, Offset(0f, size.height), 3.dp.toPx()) }
             .padding(16.dp),
     ) {
         Column {
@@ -428,12 +493,13 @@ private fun MottoCard(
             Spacer(Modifier.height(4.dp))
             Text(
                 text.ifBlank { "先做好眼前这一件。" },
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.titleLarge.copy(fontSize = 21.sp),
                 maxLines = if (expanded) Int.MAX_VALUE else 3,
                 overflow = TextOverflow.Ellipsis,
+                onTextLayout = { if (!expanded) clipped = it.hasVisualOverflow },
                 modifier = Modifier.clickable(onClick = onToggleExpand),
             )
-            if (text.lines().size > 3 || text.length > 60) {
+            if (clipped || expanded) {
                 TextButton(onClick = onToggleExpand) { Text(if (expanded) "收起" else "展开") }
             }
         }

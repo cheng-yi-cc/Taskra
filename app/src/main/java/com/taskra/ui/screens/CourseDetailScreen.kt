@@ -1,5 +1,15 @@
 package com.taskra.ui.screens
 
+import com.taskra.ui.components.notebookPaper
+
+import androidx.compose.foundation.lazy.rememberLazyListState
+import com.taskra.ui.components.rememberDragOrder
+import com.taskra.ui.components.reorderItemModifier
+import com.taskra.util.ordered
+
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,12 +25,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,15 +48,13 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import com.taskra.ui.components.PaperTopBar as TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,7 +62,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.taskra.TaskraApp
 import com.taskra.data.ReviewSession
-import com.taskra.data.ReviewResult
 import com.taskra.data.SessionStatus
 import com.taskra.data.Status
 import com.taskra.ui.AppViewModel
@@ -72,15 +82,22 @@ fun CourseDetailScreen(
     courseId: String?, // null = 未分类（需 semesterId）
     semesterId: String?,
     onBack: () -> Unit,
+    onEditTemplate: (String) -> Unit = {},
     onOpenHomework: (String) -> Unit,
     onNewHomework: (semId: String, cId: String?) -> Unit,
-    onOpenReview: (String) -> Unit,
 ) {
+    val prefs by vm.prefs.collectAsState()
+    val orderKey = "course:${courseId ?: "UNCAT"}"
+    var manual by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    var tab by remember { mutableStateOf("DONE") } // DONE/ALL/TODO，默认已完成
+    var tab by remember { mutableStateOf("ALL") } // 默认全部作业
     var sortNewest by remember { mutableStateOf(false) }
+    var showFilter by remember { mutableStateOf(false) }
+    var pendingTab by remember { mutableStateOf("ALL") }
+    var pendingNewest by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
+    var showCourseActions by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
     var renameError by remember { mutableStateOf<String?>(null) }
     var showEndOld by remember { mutableStateOf<ReviewSession?>(null) }
@@ -100,8 +117,7 @@ fun CourseDetailScreen(
     }
     val list by remember(courseId, semesterId) {
         if (courseId != null) app.repo.observeByCourse(courseId)
-        else if (semesterId != null) app.repo.db.homeworkDao().observeUncat(semesterId)
-        else kotlinx.coroutines.flow.flowOf(emptyList())
+        else app.repo.db.homeworkDao().observeUncatAll()
     }.collectAsState(initial = emptyList())
 
     val base = list
@@ -112,8 +128,9 @@ fun CourseDetailScreen(
             else -> base
         }
     }
-    val sorted = remember(filtered, sortNewest) {
-        if (sortNewest) filtered.sortedByDescending { it.createdAt }
+    val sorted = remember(filtered, sortNewest, prefs.listOrders, manual) {
+        if (manual && prefs.listOrders.containsKey(orderKey)) ordered(filtered, prefs.listOrders[orderKey].orEmpty()) { it.id }
+        else if (sortNewest) filtered.sortedByDescending { it.createdAt }
         else filtered.sortedWith(compareBy({ it.createdAt }, { it.id }))
     }
 
@@ -122,6 +139,13 @@ fun CourseDetailScreen(
     val done = total - undone
     val semId = courseObj?.semesterId ?: semesterId ?: ""
 
+    val listState = rememberLazyListState()
+    val drag = rememberDragOrder(listState, sorted.map { it.id }) { ids, rollback ->
+        manual = true
+        vm.saveOrder(orderKey, ids) { rollback(); scope.launch { snackbar.showSnackbar("排序保存失败，请重试") } }
+    }
+    val displayedItems = ordered(sorted, drag.ids) { it.id }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -129,6 +153,21 @@ fun CourseDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Outlined.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { pendingTab = tab; pendingNewest = sortNewest; showFilter = true }) {
+                        Icon(Icons.Outlined.Tune, "筛选课程作业", tint = if (tab != "ALL") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    }
+                    if (courseId != null) Box {
+                        IconButton(onClick = { showCourseActions = true }) { Icon(Icons.Outlined.MoreHoriz, "课程操作") }
+                        DropdownMenu(expanded = showCourseActions, onDismissRequest = { showCourseActions = false }) {
+                            DropdownMenuItem(text = { Text("重命名") }, onClick = { showCourseActions = false; showRename = true })
+                            DropdownMenuItem(text = { Text("课程模板") }, onClick = {
+                                showCourseActions = false
+                                onEditTemplate(courseId)
+                            })
+                        }
                     }
                 },
             )
@@ -141,108 +180,23 @@ fun CourseDetailScreen(
         },
     ) { pad ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(pad)
+            state = listState,
+            modifier = Modifier.fillMaxSize().notebookPaper().padding(pad)
                 .testTag("course_list"),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp, 12.dp, 16.dp, 96.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp, 16.dp, 24.dp, 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 Text(
-                    "共 $total · 未完成 $undone · 已完成 $done",
+                    "$undone 项待办 · $done 项完成",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = tab == "DONE", onClick = { tab = "DONE" }, label = { Text("已完成") })
-                    FilterChip(selected = tab == "ALL", onClick = { tab = "ALL" }, label = { Text("全部") })
-                    FilterChip(selected = tab == "TODO", onClick = { tab = "TODO" }, label = { Text("未完成") })
-                }
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    FilterChip(
-                        selected = !sortNewest,
-                        onClick = { sortNewest = false },
-                        label = { Text("从早到晚") },
-                    )
-                    FilterChip(
-                        selected = sortNewest,
-                        onClick = { sortNewest = true },
-                        label = { Text("最新优先") },
-                    )
-                    if (courseId != null) {
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            "重命名",
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.clickable { showRename = true }.padding(8.dp),
-                        )
-                        Text(
-                            if (courseObj?.isActive == false) "启用" else "停用",
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.clickable {
-                                scope.launch {
-                                    courseObj?.let {
-                                        // 有关联记录时仅停用，不删除；删除规则见仓库 courseDeleteBlockReason
-                                        app.repo.saveCourse(it.copy(isActive = !it.isActive))
-                                        courseObj = app.repo.getCourse(it.id)
-                                    }
-                                }
-                            }.padding(8.dp),
-                        )
-                    }
-                }
-            }
-            if (courseId != null) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            scope.launch {
-                                val ongoing = app.repo.ongoingSession(courseId)
-                                if (ongoing != null) {
-                                    postOnMain { onOpenReview(ongoing.id) }
-                                } else {
-                                    // 新一轮：纳入未删除已完成作业，按记录时间从早到晚
-                                    val doneList = app.repo.db.homeworkDao()
-                                        .listByCourse(courseId)
-                                        .filter { it.status == Status.DONE }
-                                        .sortedWith(compareBy({ it.createdAt }, { it.id }))
-                                    if (doneList.isEmpty()) {
-                                        snackbar.showSnackbar("该课程暂无已完成作业，先去完成作业吧")
-                                        return@launch
-                                    }
-                                    val ids = doneList.map { it.id }
-                                    val s = ReviewSession(
-                                        id = UUID.randomUUID().toString(),
-                                        courseId = courseId,
-                                        status = SessionStatus.ONGOING,
-                                        homeworkIdsJson = Json.encodeToString(ids),
-                                        currentIndex = 0,
-                                    )
-                                    app.repo.saveSession(s)
-                                    postOnMain { onOpenReview(s.id) }
-                                }
-                            }
-                        },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)),
-                    ) {
-                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.PlayArrow, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Column {
-                                Text("重新练习本课程作业", style = MaterialTheme.typography.titleMedium)
-                                Text("默认只看题目，解答折叠；进度单独保存", style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
-                    }
-                }
-            }
             if (sorted.isEmpty()) {
                 item {
                     Box(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(5.dp))
                             .background(MaterialTheme.colorScheme.surface).padding(24.dp),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -257,10 +211,10 @@ fun CourseDetailScreen(
                     }
                 }
             } else {
-                items(sorted, key = { it.id }) { h ->
+                items(displayedItems, key = { it.id }) { h ->
                     val c = h.courseId?.let { null } // 课程页内不再重复取
                     val overdue = TimeUtils.isOverdue(h.deadlineType, h.deadlineDate, h.deadlineTime, h.deadlineZoneId)
-                    HomeworkCard(
+                    Box(reorderItemModifier(drag, h.id).testTag("drag_homework:${h.id}")) { HomeworkCard(
                         item = TodoUiItem(
                             h, courseName.ifBlank { null }, courseObj?.colorIndex ?: 0,
                             overdue,
@@ -275,10 +229,30 @@ fun CourseDetailScreen(
                                 else app.repo.markDone(h.id)
                             }
                         },
-                    )
+                    ) }
                 }
             }
         }
+    }
+
+    if (showFilter) {
+        AlertDialog(
+            onDismissRequest = { showFilter = false },
+            title = { Text("筛选与排序") },
+            text = { Column {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("ALL" to "全部", "TODO" to "未完成", "DONE" to "已完成").forEach { (value, label) ->
+                        FilterChip(selected = pendingTab == value, onClick = { pendingTab = value }, label = { Text(label) })
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !pendingNewest, onClick = { pendingNewest = false }, label = { Text("从早到晚") })
+                    FilterChip(selected = pendingNewest, onClick = { pendingNewest = true }, label = { Text("最新优先") })
+                }
+            } },
+            confirmButton = { TextButton(onClick = { tab = pendingTab; sortNewest = pendingNewest; manual = false; showFilter = false }) { Text("应用") } },
+            dismissButton = { TextButton(onClick = { showFilter = false }) { Text("取消") } },
+        )
     }
 
     if (showRename && courseObj != null) {
@@ -298,9 +272,9 @@ fun CourseDetailScreen(
                         if (name.isEmpty()) {
                             renameError = "课程名不能为空"; return@launch
                         }
-                        val dup = app.repo.findDuplicateCourse(courseObj!!.semesterId, name, excludeId = courseObj!!.id)
+                        val dup = app.repo.db.courseDao().listAll().firstOrNull { it.name == name && it.id != courseObj!!.id }
                         if (dup != null) {
-                            renameError = "该学期已存在同名课程"; return@launch
+                            renameError = "已存在同名课程"; return@launch
                         }
                         app.repo.saveCourse(courseObj!!.copy(name = name))
                         courseName = name

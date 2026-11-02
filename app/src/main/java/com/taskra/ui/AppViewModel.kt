@@ -53,17 +53,38 @@ class AppViewModel(private val app: TaskraApp) : ViewModel() {
     val filterDue = MutableStateFlow("ALL") // ALL/OVERDUE/TODAY/WEEK/NONE
     val filterSemesterId = MutableStateFlow<String?>(null) // 按学期过滤（可选）
 
+    fun saveOrder(key: String, ids: List<String>, onFailure: () -> Unit) = viewModelScope.launch {
+        try { app.prefs.setListOrder(key, ids) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
+    }
+    fun deleteDraft(id: String, onFailure: () -> Unit) = viewModelScope.launch {
+        try { app.repo.deleteDraft(id) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
+    }
     fun setMottoVisible(v: Boolean) = viewModelScope.launch { app.prefs.setMottoVisible(v) }
     fun saveMotto(t: String) = viewModelScope.launch { app.prefs.setMotto(t) }
     fun setSort(m: String) = viewModelScope.launch { app.prefs.setSort(m) }
     fun setTheme(m: String) = viewModelScope.launch { app.prefs.setTheme(m) }
+    fun setRemindersEnabled(enabled: Boolean) = viewModelScope.launch { app.prefs.setRemindersEnabled(enabled) }
+    fun setReminderTime(minuteOfDay: Int) = viewModelScope.launch { app.prefs.setReminderTime(minuteOfDay) }
     fun setCurrentSemester(id: String?) = viewModelScope.launch { app.prefs.setCurrentSemester(id) }
 
-    fun complete(id: String, onDone: (courseName: String?) -> Unit) = viewModelScope.launch {
-        val h = app.repo.getHomework(id)
-        app.repo.markDone(id)
-        val cname = h?.courseId?.let { app.repo.getCourse(it)?.name }
-        onDone(cname)
+    fun complete(id: String, onFailure: () -> Unit) = viewModelScope.launch {
+        try { app.repo.markDone(id) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
+    }
+    fun trashHomework(id: String, onFailure: () -> Unit) = viewModelScope.launch {
+        try { app.repo.moveToTrash(id) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
+    }
+    fun trashCourse(id: String, onFailure: () -> Unit) = viewModelScope.launch {
+        try { app.repo.moveCourseToTrash(id) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
     }
     fun undoComplete(id: String) = viewModelScope.launch { app.repo.markTodo(id) }
 

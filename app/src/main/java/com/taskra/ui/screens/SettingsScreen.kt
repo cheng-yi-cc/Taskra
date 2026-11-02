@@ -1,11 +1,25 @@
 package com.taskra.ui.screens
 
+import com.taskra.ui.components.notebookPaper
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,14 +43,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.taskra.TaskraApp
 import com.taskra.data.BackupSummary
@@ -55,20 +66,13 @@ fun SettingsScreen(
     app: TaskraApp,
     vm: AppViewModel,
     onOpenTrash: () -> Unit,
-    onOpenDrafts: () -> Unit,
 ) {
     val prefs by vm.prefs.collectAsState()
-    val semesters by vm.semesters.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    var showNewSem by remember { mutableStateOf(false) }
-    var newSemName by remember { mutableStateOf("") }
-    var renameSem by remember { mutableStateOf<Semester?>(null) }
-    var renameText by remember { mutableStateOf("") }
     var backupInfo by remember { mutableStateOf<BackupSummary?>(null) }
     var backupUriPending by remember { mutableStateOf<android.net.Uri?>(null) }
     var showRestoreConfirm by remember { mutableStateOf(false) }
-    var mottoDraft by remember { mutableStateOf(prefs.mottoText) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
@@ -102,41 +106,21 @@ fun SettingsScreen(
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { pad ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(pad),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp, 12.dp, 16.dp, 96.dp),
+            modifier = Modifier.fillMaxSize().notebookPaper().padding(pad),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp, 16.dp, 24.dp, 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Text("设置", style = MaterialTheme.typography.titleLarge)
+                com.taskra.ui.components.NotebookHeading("设置")
             }
-            // 学期管理
+            // 外观
             item {
-                SettingCard("学期管理") {
-                    semesters.forEach { s ->
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.weight(1f)) {
-                                Text(s.name + if (s.isArchived) "（已归档）" else "")
-                                Text(
-                                    if (s.id == prefs.currentSemesterId) "默认新建学期" else "",
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                            }
-                            TextButton(onClick = { renameSem = s; renameText = s.name }) { Text("重命名") }
-                            TextButton(onClick = {
-                                scope.launch {
-                                    app.repo.saveSemester(s.copy(isArchived = !s.isArchived))
-                                }
-                            }) { Text(if (s.isArchived) "取消归档" else "归档") }
-                            TextButton(onClick = {
-                                scope.launch { app.prefs.setCurrentSemester(s.id) }
-                            }) { Text("设为默认") }
-                        }
+                SettingCard("外观") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = prefs.themeMode == ThemeMode.SYSTEM, onClick = { vm.setTheme(ThemeMode.SYSTEM) }, label = { Text("跟随系统") })
+                        FilterChip(selected = prefs.themeMode == ThemeMode.LIGHT, onClick = { vm.setTheme(ThemeMode.LIGHT) }, label = { Text("浅色") })
+                        FilterChip(selected = prefs.themeMode == ThemeMode.DARK, onClick = { vm.setTheme(ThemeMode.DARK) }, label = { Text("深色") })
                     }
-                    TextButton(onClick = { showNewSem = true }) { Text("＋ 新建学期") }
-                    Text(
-                        "归档只是不再作为默认新建学期，不删除作业、不自动完成，也不会隐藏往期未完成作业。",
-                        style = MaterialTheme.typography.labelSmall,
-                    )
                 }
             }
             // 自励文字
@@ -149,48 +133,16 @@ fun SettingsScreen(
                             onCheckedChange = { vm.setMottoVisible(it) },
                         )
                     }
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = mottoDraft,
-                        onValueChange = {
-                            mottoDraft = it
-                            if (it != prefs.mottoText && it.length <= 300) {
-                                // 输入暂停由保存按钮统一提交；此处实时校验长度
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2,
-                        maxLines = 6,
-                        supportingText = { Text("${mottoDraft.length}/300") },
-                    )
-                    Row {
-                        TextButton(onClick = {
-                            scope.launch {
-                                app.prefs.setMotto(mottoDraft.take(300))
-                                snackbar.showSnackbar("已保存")
-                            }
-                        }) { Text("保存") }
-                        TextButton(onClick = {
-                            mottoDraft = prefs.mottoText
-                        }) { Text("取消") }
-                        TextButton(onClick = {
-                            scope.launch {
-                                app.prefs.setMotto("")
-                                mottoDraft = ""
-                            }
-                        }) { Text("清空") }
-                    }
                 }
             }
-            // 外观
             item {
-                SettingCard("外观") {
-                    Text("主题")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = prefs.themeMode == ThemeMode.SYSTEM, onClick = { vm.setTheme(ThemeMode.SYSTEM) }, label = { Text("跟随系统") })
-                        FilterChip(selected = prefs.themeMode == ThemeMode.LIGHT, onClick = { vm.setTheme(ThemeMode.LIGHT) }, label = { Text("浅色") })
-                        FilterChip(selected = prefs.themeMode == ThemeMode.DARK, onClick = { vm.setTheme(ThemeMode.DARK) }, label = { Text("深色") })
-                    }
+                SettingCard("作业提醒") {
+                    com.taskra.ui.components.ReminderSettings(app, vm)
+                }
+            }
+            item {
+                SettingCard("回收站") {
+                    SettingAction(Icons.Outlined.DeleteOutline, "回收站", onOpenTrash)
                 }
             }
             // 备份恢复
@@ -199,82 +151,22 @@ fun SettingsScreen(
                     val fmt = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
                     Text(
                         if (prefs.lastBackupTime > 0) "最近备份：${fmt.format(Date(prefs.lastBackupTime))}"
-                        else "尚未备份（仅成功导出后更新）",
+                        else "尚未备份",
                     )
                     Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = {
-                            exportLauncher.launch("taskra-backup-${System.currentTimeMillis()}.zip")
-                        }) { Text("导出完整备份") }
-                        TextButton(onClick = { importLauncher.launch(arrayOf("application/zip", "*/*")) }) {
-                            Text("从备份恢复")
-                        }
+                    SettingAction(Icons.Outlined.FileUpload, "导出备份") {
+                        exportLauncher.launch("taskra-backup-${System.currentTimeMillis()}.zip")
                     }
-                    Text(
-                        "备份包含学期、课程、作业、图文顺序、原图、复习记录、草稿、回收站与自励文字等设置。恢复为覆盖模式，请先确认。备份未加密，请妥善保管；卸载应用可能丢失未导出的资料。",
-                        style = MaterialTheme.typography.labelSmall,
-                    )
+                    SettingAction(Icons.Outlined.FileDownload, "恢复备份") {
+                        importLauncher.launch(arrayOf("application/zip", "*/*"))
+                    }
+
+
                 }
-            }
-            item {
-                SettingCard("回收站与草稿") {
-                    Text("回收站", modifier = Modifier.clickable(onClick = onOpenTrash).padding(8.dp), color = MaterialTheme.colorScheme.primary)
-                    Text("草稿箱", modifier = Modifier.clickable(onClick = onOpenDrafts).padding(8.dp), color = MaterialTheme.colorScheme.primary)
-                }
-            }
-            item {
-                Text(
-                    "课迹 Taskra · 本地优先，离线可用。不含账号、同步、广告与追踪。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
 
-    if (showNewSem) {
-        AlertDialog(
-            onDismissRequest = { showNewSem = false },
-            title = { Text("新建学期") },
-            text = {
-                OutlinedTextField(value = newSemName, onValueChange = { newSemName = it }, label = { Text("如 2026 秋季") }, singleLine = true)
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        val name = newSemName.trim()
-                        if (name.isEmpty()) return@launch
-                        val id = UUID.randomUUID().toString()
-                        app.repo.saveSemester(Semester(id, name, false, semesters.size))
-                        newSemName = ""
-                        showNewSem = false
-                    }
-                }) { Text("创建") }
-            },
-            dismissButton = { TextButton(onClick = { showNewSem = false }) { Text("取消") } },
-        )
-    }
-    if (renameSem != null) {
-        AlertDialog(
-            onDismissRequest = { renameSem = null },
-            title = { Text("重命名学期") },
-            text = {
-                OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true)
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val s = renameSem ?: return@TextButton
-                    scope.launch {
-                        if (renameText.trim().isNotEmpty()) {
-                            app.repo.saveSemester(s.copy(name = renameText.trim()))
-                        }
-                        renameSem = null
-                    }
-                }) { Text("保存") }
-            },
-            dismissButton = { TextButton(onClick = { renameSem = null }) { Text("取消") } },
-        )
-    }
     if (showRestoreConfirm && backupInfo != null) {
         val info = backupInfo!!
         val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
@@ -284,9 +176,9 @@ fun SettingsScreen(
             text = {
                 Text(
                     "备份时间：${fmt.format(Date(info.createdAt))}\n" +
-                        "课程 ${info.courseCount} · 作业 ${info.homeworkCount} · 图片 ${info.imageCount} · " +
+                        "课程 ${info.courseCount} · 作业 ${info.homeworkCount} · 图片 ${info.imageCount} · 录音 ${info.audioCount} · " +
                         (if (info.hasDrafts) "含草稿" else "无草稿") +
-                        "\n\n恢复将覆盖当前全部数据。已先做校验，导入失败会保持旧数据可用。"
+                        ""
                 )
             },
             confirmButton = {
@@ -312,14 +204,24 @@ fun SettingsScreen(
 private fun SettingCard(title: String, content: @Composable () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(5.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(1.dp),
+        elevation = CardDefaults.cardElevation(0.dp),
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
+        Column(Modifier.padding(20.dp)) {
+            Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
             content()
         }
+    }
+}
+
+@Composable
+private fun SettingAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(14.dp))
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

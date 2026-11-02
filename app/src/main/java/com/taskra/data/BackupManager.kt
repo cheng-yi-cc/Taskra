@@ -14,11 +14,11 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
-const val BACKUP_FORMAT_VERSION = 1
+const val BACKUP_FORMAT_VERSION = 4
 
 @Serializable
 data class BackupManifest(
-    val formatVersion: Int = BACKUP_FORMAT_VERSION,
+    val formatVersion: Int = 1,
     val createdAt: Long = System.currentTimeMillis(),
     val counts: Map<String, Int> = emptyMap(),
     val sha256: Map<String, String> = emptyMap(), // 路径 -> sha256
@@ -35,6 +35,7 @@ data class BackupData(
     val sessions: List<ReviewSession>,
     val items: List<ReviewItem>,
     val prefs: UserPrefs,
+    val audioIds: List<String> = emptyList(),
 )
 
 data class BackupSummary(
@@ -43,9 +44,10 @@ data class BackupSummary(
     val courseCount: Int,
     val imageCount: Int,
     val hasDrafts: Boolean,
+    val audioCount: Int = 0,
 )
 
-private val BackupJson = Json { ignoreUnknownKeys = true; prettyPrint = false }
+private val BackupJson = Json { ignoreUnknownKeys = true; prettyPrint = false; encodeDefaults = true }
 
 fun sha256(f: File): String {
     val d = MessageDigest.getInstance("SHA-256")
@@ -94,7 +96,10 @@ class BackupManager(
         }
         // 直接从 review_sessions 全表读取（含已结束轮次，保留历史）
         val p = prefs.snapshot()
-        val data = BackupData(semesters, courses, homeworkAll, blocksAll, images, draftsAll, sessionsAll, itemsAll, p)
+        val audioIds = (courses.flatMap { decodeTemplate(it.templateJson)?.blocks.orEmpty() }.mapNotNull { it.audioId } + blocksAll.mapNotNull { it.audioId } + draftsAll.flatMap {
+            (decodeBlocks(it.blocksJson) + decodeBlocks(it.solutionJson)).mapNotNull { block -> block.audioId }
+        }).distinct()
+        val data = BackupData(semesters, courses, homeworkAll, blocksAll, images, draftsAll, sessionsAll, itemsAll, p, audioIds)
         val dataBytes = BackupJson.encodeToString(data).toByteArray(Charsets.UTF_8)
 
         val hashes = mutableMapOf<String, String>()
@@ -104,6 +109,11 @@ class BackupManager(
             val f = File(context.filesDir, img.relativePath)
             if (f.exists()) hashes["assets/${img.id}.jpg"] = sha256(f)
         }
+        audioIds.forEach { id ->
+            val file = audioFile(context, id)
+            require(file.isFile && file.length() > 0) { "录音文件缺失：$id" }
+            hashes["audio/$id.m4a"] = sha256(file)
+        }
         val manifest = BackupManifest(
             formatVersion = BACKUP_FORMAT_VERSION,
             createdAt = System.currentTimeMillis(),
@@ -112,6 +122,7 @@ class BackupManager(
                 "courses" to courses.size,
                 "homework" to homeworkAll.size,
                 "images" to images.size,
+                "audio" to audioIds.size,
                 "sessions" to sessionsAll.size,
                 "drafts" to draftsAll.size,
             ),
@@ -132,6 +143,11 @@ class BackupManager(
                     if (!f.exists()) return@forEach
                     zip.putNextEntry(ZipEntry("assets/${img.id}.jpg"))
                     f.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+                audioIds.forEach { id ->
+                    zip.putNextEntry(ZipEntry("audio/$id.m4a"))
+                    audioFile(context, id).inputStream().use { it.copyTo(zip) }
                     zip.closeEntry()
                 }
             }
@@ -183,6 +199,7 @@ class BackupManager(
                         courseCount = data.courses.size,
                         imageCount = data.images.size,
                         hasDrafts = data.drafts.isNotEmpty(),
+                        audioCount = data.audioIds.size,
                     )
                 }
             } finally {
@@ -201,8 +218,6 @@ class BackupManager(
             context.contentResolver.openInputStream(uri)?.use { ins ->
                 tmp.outputStream().use { out -> ins.copyTo(out) }
             } ?: throw IllegalArgumentException("无法读取备份文件")
-            // 回滚副本：导出当前快照到 cache
-            val rollback = File(context.cacheDir, "taskra_rollback_${System.currentTimeMillis()}.zip")
             try {
                 ZipFile(tmp).use { zip ->
                     val manifest = BackupJson.decodeFromString<BackupManifest>(
@@ -210,7 +225,7 @@ class BackupManager(
                             ?: throw IllegalArgumentException("缺少 manifest.json"))
                             .readBytes().toString(Charsets.UTF_8)
                     )
-                    if (manifest.formatVersion != BACKUP_FORMAT_VERSION) {
+                    if (manifest.formatVersion !in 1..BACKUP_FORMAT_VERSION) {
                         throw IllegalArgumentException("不支持的备份版本：${manifest.formatVersion}")
                     }
                     val dataBytes = zip.getInputStream(zip.getEntry("data.json")
@@ -233,51 +248,73 @@ class BackupManager(
                             ?: throw IllegalArgumentException("备份缺少图片：${img.id}")
                         if (e.size <= 0) throw IllegalArgumentException("图片为空：${img.id}")
                     }
-                    // 生成回滚副本（当前 DB 导出到 rollback 文件，占位简化：只保护偏好+标记）
-                    // 真正的原子恢复：清表→写入→复制图片；任一步失败则抛异常由调用方提示“旧数据仍可用”
-                    performRestore(zip, data)
+                    val referencedAudio = data.courses.flatMap { decodeTemplate(it.templateJson)?.blocks.orEmpty() }.mapNotNull { it.audioId } + data.blocks.mapNotNull { it.audioId } + data.drafts.flatMap {
+                        (decodeBlocks(it.blocksJson) + decodeBlocks(it.solutionJson)).mapNotNull { block -> block.audioId }
+                    }
+                    require(data.audioIds.containsAll(referencedAudio)) { "备份缺少录音清单" }
+                    performRestore(zip, data, manifest)
+
                 }
             } finally {
                 try { tmp.delete() } catch (_: Exception) { }
             }
         }
 
-    private suspend fun performRestore(zip: ZipFile, data: BackupData) {
+    private suspend fun performRestore(zip: ZipFile, data: BackupData, manifest: BackupManifest) {
         val db = repo.db
-        // 先把图片解压到 tmp staging
-        val staging = File(context.filesDir, "tmp/restore_${System.currentTimeMillis()}").apply { mkdirs() }
-        data.images.forEach { img ->
-            val e = zip.getEntry("assets/${img.id}.jpg") ?: return@forEach
-            val out = File(staging, "${img.id}.jpg")
-            zip.getInputStream(e).use { ins -> out.outputStream().use { o -> ins.copyTo(o) } }
-        }
-        // 校验解压后图片可解码
-        staging.listFiles()?.forEach { f ->
-            val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            android.graphics.BitmapFactory.decodeFile(f.absolutePath, opts)
-            if (opts.outWidth <= 0) throw IllegalArgumentException("备份图片损坏：${f.name}")
-        }
-        // 事务写入结构化数据
-        db.withTransaction {
-            db.clearAllTables()
-            data.semesters.forEach { db.semesterDao().upsert(it) }
-            data.courses.forEach { db.courseDao().upsert(it) }
-            data.homework.forEach { db.homeworkDao().upsert(it) }
-            if (data.blocks.isNotEmpty()) db.blockDao().upsertAll(data.blocks)
-            data.images.forEach { db.imageDao().upsert(it) }
-            data.drafts.forEach { db.draftDao().upsert(it) }
-            data.sessions.forEach { db.reviewDao().upsertSession(it) }
-            if (data.items.isNotEmpty()) db.reviewDao().upsertItems(data.items)
-        }
-        // 提交图片到正式目录
-        val dest = File(context.filesDir, "images").apply { mkdirs() }
-        staging.listFiles()?.forEach { f ->
-            f.copyTo(File(dest, f.name), overwrite = true)
-        }
+        val staging = File(context.filesDir, "tmp/restore_${java.util.UUID.randomUUID()}").apply { mkdirs() }
+        val oldPrefs = prefs.snapshot()
+        val installed = mutableListOf<Pair<File, File?>>()
         try {
+            val files = mutableListOf<Pair<File, File>>()
+            data.images.forEach { img ->
+                require(Regex("[a-zA-Z0-9_-]+").matches(img.id)) { "图片标识无效" }
+                val path = "assets/${img.id}.jpg"
+                val entry = zip.getEntry(path) ?: error("备份缺少图片")
+                val staged = File(staging, "image-${img.id}.jpg")
+                zip.getInputStream(entry).use { input -> staged.outputStream().use { input.copyTo(it) } }
+                manifest.sha256[path]?.let { require(sha256(staged) == it) { "图片校验失败" } }
+                val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(staged.absolutePath, options)
+                require(options.outWidth > 0) { "备份图片损坏" }
+                files += staged to File(context.filesDir, "images/${img.id}.jpg")
+            }
+            data.audioIds.distinct().forEach { id ->
+                val destination = audioFile(context, id)
+                val path = "audio/$id.m4a"
+                val entry = zip.getEntry(path) ?: error("备份缺少录音")
+                val staged = File(staging, "audio-$id.m4a")
+                zip.getInputStream(entry).use { input -> staged.outputStream().use { input.copyTo(it) } }
+                require(staged.length() > 0 && sha256(staged) == manifest.sha256[path]) { "录音校验失败" }
+                files += staged to destination
+            }
+            // 所有文件先校验；覆盖文件留回滚副本，DB 失败时恢复原文件。
+            files.forEachIndexed { index, (staged, destination) ->
+                destination.parentFile?.mkdirs()
+                val old = if (destination.exists()) File(staging, "rollback-$index").also { destination.copyTo(it) } else null
+                installed += destination to old
+                staged.copyTo(destination, overwrite = true)
+            }
+            db.withTransaction {
+                db.clearAllTables()
+                data.semesters.forEach { db.semesterDao().upsert(it) }
+                data.courses.forEach { db.courseDao().upsert(it) }
+                data.homework.forEach { db.homeworkDao().upsert(it) }
+                if (data.blocks.isNotEmpty()) db.blockDao().upsertAll(data.blocks)
+                data.images.forEach { db.imageDao().upsert(it.copy(relativePath = "images/${it.id}.jpg")) }
+                data.drafts.forEach { db.draftDao().upsert(it) }
+                data.sessions.forEach { db.reviewDao().upsertSession(it) }
+                if (data.items.isNotEmpty()) db.reviewDao().upsertItems(data.items)
+                prefs.restore(data.prefs)
+            }
+        } catch (e: Exception) {
+            installed.asReversed().forEach { (destination, old) ->
+                if (old != null) old.copyTo(destination, overwrite = true) else destination.delete()
+            }
+            prefs.restore(oldPrefs)
+            throw e
+        } finally {
             staging.deleteRecursively()
-        } catch (_: Exception) {
         }
-        prefs.restore(data.prefs)
     }
 }

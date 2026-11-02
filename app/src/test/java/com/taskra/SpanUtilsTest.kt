@@ -43,9 +43,18 @@ class SpanUtilsTest {
         // 已完全覆盖：取消
         val removed = toggleMark(added, SpanType.BOLD, 0, 1..3)
         assertTrue(removed.isEmpty())
-        // 部分重叠：替换为新区间
+        // 部分重叠：选区外原有格式保留
         val replaced = toggleMark(listOf(SpanMark(SpanType.BOLD, 0, 2)), SpanType.BOLD, 0, 1..3)
-        assertEquals(listOf(SpanMark(SpanType.BOLD, 1, 4)), replaced)
+        assertEquals(listOf(SpanMark(SpanType.BOLD, 0, 1), SpanMark(SpanType.BOLD, 1, 4)), replaced)
+    }
+
+    @Test
+    fun `选区取消格式不影响两侧文字`() {
+        val spans = listOf(SpanMark(SpanType.BOLD, 0, 10), SpanMark(SpanType.HIGHLIGHT, 0, 10))
+        val result = toggleMark(spans, SpanType.BOLD, 0, 3 until 6)
+        assertEquals(listOf(SpanMark(SpanType.BOLD, 0, 3), SpanMark(SpanType.BOLD, 6, 10), SpanMark(SpanType.HIGHLIGHT, 0, 10)), result)
+        val resized = com.taskra.util.setMark(listOf(SpanMark(SpanType.HEADING, 0, 10, 1)), SpanType.HEADING, 2, 3 until 6)
+        assertEquals(listOf(SpanMark(SpanType.HEADING, 0, 3, 1), SpanMark(SpanType.HEADING, 6, 10, 1), SpanMark(SpanType.HEADING, 3, 6, 2)), resized)
     }
 
     @Test

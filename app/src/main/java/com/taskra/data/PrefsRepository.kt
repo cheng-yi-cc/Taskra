@@ -3,6 +3,7 @@ package com.taskra.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -10,6 +11,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 private val Context.prefsStore by preferencesDataStore(name = "taskra_prefs")
 
@@ -21,9 +24,16 @@ data class UserPrefs(
     val sortMode: String = SortMode.DEADLINE,
     val currentSemesterId: String? = null,
     val lastBackupTime: Long = 0L,
+    val listOrders: Map<String, List<String>> = emptyMap(),
+    val remindersEnabled: Boolean = true,
+    val reminderMinuteOfDay: Int = 9 * 60,
 )
 
 class PrefsRepository(private val context: Context) {
+    private val K_REMINDERS = booleanPreferencesKey("reminders_enabled")
+    private val K_REMINDER_TIME = intPreferencesKey("reminder_minute_of_day")
+    private val K_ORDERS = stringPreferencesKey("list_orders")
+    private fun readOrders(raw: String?) = runCatching { Json.decodeFromString<Map<String, List<String>>>(raw ?: "{}") }.getOrDefault(emptyMap())
     private val K_MOTTO = stringPreferencesKey("motto_text")
     private val K_MOTTO_VISIBLE = booleanPreferencesKey("motto_visible")
     private val K_THEME = stringPreferencesKey("theme_mode")
@@ -39,11 +49,28 @@ class PrefsRepository(private val context: Context) {
             sortMode = p[K_SORT] ?: SortMode.DEADLINE,
             currentSemesterId = p[K_SEMESTER],
             lastBackupTime = p[K_BACKUP] ?: 0L,
+            listOrders = readOrders(p[K_ORDERS]),
+            remindersEnabled = p[K_REMINDERS] ?: true,
+            reminderMinuteOfDay = (p[K_REMINDER_TIME] ?: 540).coerceIn(0, 1439),
         )
     }
 
+    suspend fun setListOrder(key: String, visibleIds: List<String>) {
+        context.prefsStore.edit { p ->
+            val orders = readOrders(p[K_ORDERS])
+            p[K_ORDERS] = Json.encodeToString(orders + (key to com.taskra.util.mergeVisibleOrder(orders[key].orEmpty(), visibleIds)))
+            if (key == "todo") p[K_SORT] = SortMode.MANUAL
+        }
+    }
     suspend fun setMotto(text: String) {
         context.prefsStore.edit { it[K_MOTTO] = text.take(2000) }
+    }
+    suspend fun setRemindersEnabled(enabled: Boolean) {
+        context.prefsStore.edit { it[K_REMINDERS] = enabled }
+    }
+    suspend fun setReminderTime(minuteOfDay: Int) {
+        require(minuteOfDay in 0..1439)
+        context.prefsStore.edit { it[K_REMINDER_TIME] = minuteOfDay }
     }
     suspend fun setMottoVisible(v: Boolean) {
         context.prefsStore.edit { it[K_MOTTO_VISIBLE] = v }
@@ -73,6 +100,9 @@ class PrefsRepository(private val context: Context) {
             sortMode = p[K_SORT] ?: SortMode.DEADLINE,
             currentSemesterId = p[K_SEMESTER],
             lastBackupTime = p[K_BACKUP] ?: 0L,
+            listOrders = readOrders(p[K_ORDERS]),
+            remindersEnabled = p[K_REMINDERS] ?: true,
+            reminderMinuteOfDay = (p[K_REMINDER_TIME] ?: 540).coerceIn(0, 1439),
         )
     }
 
@@ -84,6 +114,9 @@ class PrefsRepository(private val context: Context) {
             it[K_SORT] = p.sortMode
             if (p.currentSemesterId == null) it.remove(K_SEMESTER) else it[K_SEMESTER] = p.currentSemesterId
             it[K_BACKUP] = p.lastBackupTime
+            it[K_ORDERS] = Json.encodeToString(p.listOrders)
+            it[K_REMINDERS] = p.remindersEnabled
+            it[K_REMINDER_TIME] = p.reminderMinuteOfDay.coerceIn(0, 1439)
         }
     }
 }

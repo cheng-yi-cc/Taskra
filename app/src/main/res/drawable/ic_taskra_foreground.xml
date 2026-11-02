@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- 轻微错位的纸片与折角，主体保持在自适应图标安全区内。 -->
+    <path android:fillColor="#E8D8C9" android:pathData="M31,32 Q31,27 37,27 L73,31 Q78,32 77,38 L72,79 Q71,84 65,83 L29,78 Q24,77 25,71 Z" />
+    <path android:fillColor="#B94335" android:pathData="M32,28 Q32,24 37,24 L65,24 L80,39 L76,75 Q75,80 70,80 L32,76 Q27,75 28,70 Z" />
+    <path android:fillColor="#DE8671" android:pathData="M65,24 L64,35 Q64,40 69,40 L80,39 Z" />
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#FAF7F2"
+        android:strokeWidth="6" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M40,53 L49,63 L66,46" />
+</vector>

@@ -1,10 +1,15 @@
 package com.taskra
 
 import android.os.Bundle
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -21,6 +26,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.taskra.ui.components.OpeningAnimation
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -47,13 +57,27 @@ import com.taskra.ui.screens.TrashScreen
 import com.taskra.ui.theme.TaskraTheme
 
 class MainActivity : ComponentActivity() {
+    private var reminderHomeworkId by mutableStateOf<String?>(null)
+
+    override fun onResume() {
+        super.onResume()
+        (application as TaskraApp).reminders.refresh()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        reminderHomeworkId = intent.getStringExtra(com.taskra.reminders.HomeworkReminders.EXTRA_HOMEWORK_ID)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) reminderHomeworkId = intent.getStringExtra(com.taskra.reminders.HomeworkReminders.EXTRA_HOMEWORK_ID)
         enableEdgeToEdge()
         val app = application as TaskraApp
         setContent {
             val vm: AppViewModel = viewModel(factory = AppViewModel.Factory(app))
             val prefs by vm.prefs.collectAsState()
+            val todo by vm.todoAll.collectAsState()
             val dark = when (prefs.themeMode) {
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
@@ -64,11 +88,26 @@ class MainActivity : ComponentActivity() {
                 val backStack by nav.currentBackStackEntryAsState()
                 val route = backStack?.destination?.route ?: "todo"
                 val showBottom = route in listOf("todo", "courses", "settings")
+                var showOpening by rememberSaveable { mutableStateOf(!app.openingShown && savedInstanceState == null) }
+                LaunchedEffect(Unit) { app.openingShown = true }
+                com.taskra.ui.components.ReminderPermissionPrompt(app, prefs.remindersEnabled && !showOpening,
+                    todo.any { it.deadlineType != com.taskra.data.DeadlineType.NONE })
+                LaunchedEffect(reminderHomeworkId) {
+                    val id = reminderHomeworkId ?: return@LaunchedEffect
+                    val homework = app.repo.getHomework(id)
+                    if (homework != null && homework.deletedAt == null) {
+                        nav.navigate("homework/${Uri.encode(id)}") { launchSingleTop = true }
+                    }
+                    reminderHomeworkId = null
+                }
+                Box(Modifier.fillMaxSize()) {
                 Scaffold(
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     bottomBar = {
                         if (showBottom) {
-                            NavigationBar {
+                            NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
                                 NavigationBarItem(
+                                    alwaysShowLabel = false,
                                     selected = route == "todo",
                                     onClick = {
                                         nav.navigate("todo") {
@@ -77,10 +116,11 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     modifier = Modifier.testTag("nav_todo"),
-                                    icon = { Icon(Icons.Outlined.CheckCircle, contentDescription = null) },
+                                    icon = { Icon(Icons.Outlined.CheckCircle, contentDescription = "待办") },
                                     label = { Text("待办") },
                                 )
                                 NavigationBarItem(
+                                    alwaysShowLabel = false,
                                     selected = route == "courses",
                                     onClick = {
                                         nav.navigate("courses") {
@@ -89,10 +129,11 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     modifier = Modifier.testTag("nav_courses"),
-                                    icon = { Icon(Icons.Outlined.Book, contentDescription = null) },
+                                    icon = { Icon(Icons.Outlined.Book, contentDescription = "课程") },
                                     label = { Text("课程") },
                                 )
                                 NavigationBarItem(
+                                    alwaysShowLabel = false,
                                     selected = route == "settings",
                                     onClick = {
                                         nav.navigate("settings") {
@@ -101,19 +142,19 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     modifier = Modifier.testTag("nav_settings"),
-                                    icon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
+                                    icon = { Icon(Icons.Outlined.Settings, contentDescription = "设置") },
                                     label = { Text("设置") },
                                 )
                             }
                         }
                     },
                 ) { pad ->
-                    Box(Modifier.fillMaxSize().padding(pad)) {
+                    Box(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad)) {
                         // 平板宽屏：限制正文最大宽度并居中；手机单列不受影响
                         Box(
                             Modifier
-                                .fillMaxSize()
                                 .widthIn(max = 720.dp)
+                                .fillMaxSize()
                                 .align(Alignment.Center)
                         ) {
                         NavHost(navController = nav, startDestination = "todo") {
@@ -137,7 +178,6 @@ class MainActivity : ComponentActivity() {
                                 SettingsScreen(
                                     app = app, vm = vm,
                                     onOpenTrash = { nav.navigate("trash") },
-                                    onOpenDrafts = { nav.navigate("drafts") },
                                 )
                             }
                             composable(
@@ -146,13 +186,12 @@ class MainActivity : ComponentActivity() {
                             ) { e ->
                                 val id = e.arguments?.getString("courseId") ?: return@composable
                                 CourseDetailScreen(
-                                    app = app, vm = vm, courseId = id, semesterId = null,
+                                    onEditTemplate = { nav.navigate("editor/template/$it") },                                    app = app, vm = vm, courseId = id, semesterId = null,
                                     onBack = { nav.popBackStack() },
                                     onOpenHomework = { nav.navigate("homework/$it") },
                                     onNewHomework = { semId, cId ->
                                         nav.navigate("editor/new?semesterId=$semId&courseId=${cId ?: ""}")
                                     },
-                                    onOpenReview = { nav.navigate("review/$it") },
                                 )
                             }
                             composable(
@@ -179,9 +218,19 @@ class MainActivity : ComponentActivity() {
                                 EditorScreen(
                                     app = app, vm = vm, homeworkId = null,
                                     presetSemesterId = sem, presetCourseId = c,
-                                    onDone = { nav.popBackStack() },
+                                    onDone = { hasDrafts ->
+                                        if (nav.previousBackStackEntry?.destination?.route == "drafts" && !hasDrafts) {
+                                            nav.popBackStack("todo", false)
+                                        } else nav.popBackStack()
+                                    },
                                     onCancel = { nav.popBackStack() },
                                 )
+                            }
+                            composable("editor/template/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                                EditorScreen(app, vm, homeworkId = null, presetSemesterId = null,
+                                    presetCourseId = entry.arguments?.getString("id"),
+                                    templateCourseId = entry.arguments?.getString("id"),
+                                    onDone = { nav.popBackStack() }, onCancel = { nav.popBackStack() })
                             }
                             composable(
                                 "editor/edit/{id}",
@@ -191,7 +240,11 @@ class MainActivity : ComponentActivity() {
                                 EditorScreen(
                                     app = app, vm = vm, homeworkId = id,
                                     presetSemesterId = null, presetCourseId = null,
-                                    onDone = { nav.popBackStack() },
+                                    onDone = { hasDrafts ->
+                                        if (nav.previousBackStackEntry?.destination?.route == "drafts" && !hasDrafts) {
+                                            nav.popBackStack("todo", false)
+                                        } else nav.popBackStack()
+                                    },
                                     onCancel = { nav.popBackStack() },
                                 )
                             }
@@ -234,18 +287,19 @@ class MainActivity : ComponentActivity() {
                             ) { e ->
                                 val semId = e.arguments?.getString("semesterId") ?: return@composable
                                 CourseDetailScreen(
-                                    app = app, vm = vm, courseId = null, semesterId = semId,
+                                    onEditTemplate = { nav.navigate("editor/template/$it") },                                    app = app, vm = vm, courseId = null, semesterId = semId,
                                     onBack = { nav.popBackStack() },
                                     onOpenHomework = { nav.navigate("homework/$it") },
                                     onNewHomework = { sId, _ ->
                                         nav.navigate("editor/new?semesterId=$sId&courseId=")
                                     },
-                                    onOpenReview = { nav.navigate("review/$it") },
                                 )
                             }
                         }
                         }
                     }
+                }
+                if (showOpening) OpeningAnimation(onFinished = { showOpening = false })
                 }
             }
         }

@@ -1,11 +1,13 @@
 package com.taskra.ui.screens
 
+import com.taskra.ui.components.notebookPaper
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,8 +21,6 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,20 +31,17 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import com.taskra.ui.components.PaperTopBar as TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.taskra.TaskraApp
@@ -111,22 +108,21 @@ fun HomeworkDetailScreen(
         val overdue = h.status == Status.TODO &&
             TimeUtils.isOverdue(h.deadlineType, h.deadlineDate, h.deadlineTime, h.deadlineZoneId)
         LazyColumn(
-            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(pad),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp, 12.dp, 16.dp, 32.dp),
+            modifier = Modifier.fillMaxSize().notebookPaper().padding(pad),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp, 16.dp, 24.dp, 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 Text(h.title.ifBlank { "未命名作业" }, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    (d.course?.name ?: "未分类") + " · " + (d.semester?.name ?: ""),
+                    (d.course?.name ?: "未分类"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
                     TimeUtils.formatDeadline(h.deadlineType, h.deadlineDate, h.deadlineTime, h.deadlineZoneId) +
-                        (if (!h.deadlineZoneId.isNullOrBlank() && h.deadlineType != "NONE") "（${h.deadlineZoneId}）" else "") +
                         (if (overdue) " · 已逾期" else "") +
                         (if (h.status == Status.DONE) " · 已完成" else ""),
                     style = MaterialTheme.typography.bodyMedium,
@@ -156,7 +152,6 @@ fun HomeworkDetailScreen(
                             scope.launch {
                                 app.repo.markDone(homeworkId)
                                 detail = app.repo.detail(homeworkId)
-                                snackbar.showSnackbar("已完成")
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -180,8 +175,8 @@ fun HomeworkDetailScreen(
     if (showDelete) {
         AlertDialog(
             onDismissRequest = { showDelete = false },
-            title = { Text("删除作业？") },
-            text = { Text("将移入回收站，可恢复全部内容。") },
+            title = { Text("移入回收站？") },
+
             confirmButton = {
                 TextButton(onClick = {
                     showDelete = false
@@ -202,21 +197,13 @@ fun BlockView(app: TaskraApp, b: ContentBlock, onClickImage: () -> Unit) {
         if (!b.text.isNullOrBlank()) {
             val highlight = rememberHighlightColor()
             val baseSize = MaterialTheme.typography.bodyLarge.fontSize
-            val annotated = remember(b.text, b.spanJson) {
+            val annotated = remember(b.text, b.spanJson, highlight, baseSize) {
                 buildAnnotated(b.text, decodeSpans(b.spanJson), highlight, baseSize)
             }
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            ) {
-                Text(
-                    annotated,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(14.dp),
-                )
-            }
+            Text(annotated, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
         }
+    } else if (b.kind == BlockKind.AUDIO && b.audioId != null) {
+        com.taskra.ui.components.AudioAttachment(b.audioId, b.audioDurationMs)
     } else {
         val assetId = b.imageId
         if (assetId != null) {

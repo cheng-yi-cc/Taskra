@@ -1,9 +1,12 @@
 package com.taskra.ui.screens
 
+import com.taskra.ui.components.notebookPaper
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,8 +17,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.ArrowForward
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -27,25 +28,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import com.taskra.ui.components.PaperTopBar as TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.taskra.TaskraApp
-import com.taskra.data.BlockKind
 import com.taskra.data.ReviewItem
 import com.taskra.data.ReviewResult
-import com.taskra.data.ReviewSession
 import com.taskra.data.SessionStatus
 import com.taskra.ui.AppViewModel
 import com.taskra.util.postOnMain
@@ -122,13 +117,13 @@ fun ReviewScreen(
             return@Scaffold
         }
         LazyColumn(
-            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(pad),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp, 12.dp, 16.dp, 32.dp),
+            modifier = Modifier.fillMaxSize().notebookPaper().padding(pad),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp, 16.dp, 24.dp, 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 Text(
-                    "本轮已练${practiced}/${ids.size}项，其中${needRetry}项还需要再练。",
+                    "已练 $practiced / ${ids.size} · 待复习 $needRetry",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(6.dp))
@@ -146,7 +141,7 @@ fun ReviewScreen(
                         shape = RoundedCornerShape(12.dp),
                     ) {
                         Text(
-                            "本轮这项作业已被移入回收站或删除，跳过即可，不计入已练。",
+                            "作业已删除",
                             modifier = Modifier.padding(14.dp),
                         )
                     }
@@ -202,7 +197,7 @@ fun ReviewScreen(
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                Text("上一项/下一项只是浏览，不自动标记练过。", style = MaterialTheme.typography.labelSmall)
+
             }
             item {
                 OutlinedButton(
