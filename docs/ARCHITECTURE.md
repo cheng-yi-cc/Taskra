@@ -1,6 +1,6 @@
 # Taskra 架构说明
 
-面向第一次接触本项目的人：5 分钟了解代码放在哪、数据怎么流、备份长什么样。
+面向第一次接触本项目的人：5 分钟了解代码放在哪、数据怎么流、备份与发版长什么样。
 构建安装见 `README.md`，验收状态见 `TEST-REPORT.md`。
 
 ## 1. 模块与分层
@@ -9,98 +9,73 @@
 
 ```
 app/src/main/java/com/taskra/
-  MainActivity.kt        三底部导航（待办/课程/设置）+ NavHost 路由
-  TaskraApp.kt           Room / Repository / Prefs / ImageStore / BackupManager 组装
-  data/                  Room 实体·DAO·Repository·备份·图片存储·偏好
-  reminders/             提醒规划、系统闹钟与通知
-  util/                  时间工具（含可注入时钟）、排序、标题生成、富文本、主线程投递
+  MainActivity.kt        三底部导航（待办/课程/设置）+ NavHost 路由 + 首次启动开屏动画
+  TaskraApp.kt           Room / Repository / Prefs / ImageStore / BackupManager / 提醒组装
+  data/                  Room 实体·DAO·Repository·备份(v4)·图片/录音存储·偏好·课程模板
+  reminders/             提醒规划（ReminderPlan）、系统闹钟（AlarmManager）与通知（HomeworkReminders）
+  util/                  时间工具（含可注入时钟）、排序、标题生成、富文本、编辑器文档、主线程投递
   ui/
-    AppViewModel.kt      全局偏好流、待办筛选状态、完成/撤销
-    theme/               暖色设计令牌（亮/暗两套），无动态取色
-    components/          作业卡片等复用组件
+    AppViewModel.kt      全局偏好流、待办筛选状态、手动排序持久化、完成/软删除
+    theme/               暖白方格纸与暖灰深色设计令牌（无动态取色）+ 霞鹜文楷字体
+    components/          方格纸背景、作业卡片、手势左滑、纸片消散、长按拖拽排序、录音与贴图组件
     screens/             Todo / Courses / CourseDetail / HomeworkDetail /
-                         Editor / Review / Settings / Trash / Drafts / ImageViewer
+                         Editor / Settings / Trash / Drafts / ImageViewer（Review 仅保留历史兼容）
 ```
 
-数据流向：界面 → ViewModel/协程 → `TaskraRepository` → Room / DataStore / 文件。
-待办列表、课程计数、详情、复习都从同一套 Room 数据派生，不各自存副本。
+数据流向：界面 → ViewModel/协程 → `TaskraRepository` → Room / DataStore / 内部存储文件。
+待办列表、课程计数与详情均从同一套 Room 数据实时派生，不各自存副本。
 
 ## 2. 数据模型（DB v5）
 
 | 表 | 关键字段 |
 |---|---|
-| `semesters` | id、name、isArchived（归档≠删除） |
-| `courses` | id、semesterId、name（同学期唯一）、colorIndex、isActive、deletedAt、templateJson |
-| `homework` | id、semesterId、可空 courseId、title、`TODO/DONE`、截止类型+日期+时间+时区ID、`createdAt`（永不改）、`completedAt`、`deletedAt`（回收站） |
-| `content_blocks` | id、homeworkId、region（只用 QUESTION）、kind（TEXT/IMAGE/AUDIO）、position、`text/imageId`、`spanJson`（v2）、`audioId/audioDurationMs`（v3） |
-| `image_assets` | id、相对路径（`images/<id>.jpg`）、宽高、大小 |
-| `editor_drafts` | `new` / `edit:<id>` / `template:<courseId>` 为键，题目 blocks JSON（含 spans） |
-| `review_sessions` / `review_items` | 轮次作业 ID 快照、当前位置、每项结果（MASTERED/NEED_RETRY） |
+| `courses` | `id`、`semesterId`（内部兼容保留）、`name`、`colorIndex`、`isActive`、`deletedAt`（v4 软删除）、`templateJson`（v5 课程模板） |
+| `homework` | `id`、`semesterId`、可空 `courseId`、`title`、`TODO/DONE`、截止类型+日期+时间+时区ID、`createdAt`（永不改）、`completedAt`、`deletedAt`（回收站） |
+| `content_blocks` | `id`、`homeworkId`、`region`（仅使用 `QUESTION`）、`kind`（`TEXT/IMAGE/AUDIO`）、`position`、`text/imageId`、`spanJson`（v2）、`audioId/audioDurationMs`（v3） |
+| `image_assets` | `id`、相对路径（`images/<id>.jpg`）、宽高、大小 |
+| `editor_drafts` | 以 `new` / `edit:<id>` / `template:<courseId>` 为键，保存有序题目 blocks JSON（含富文本 spans 与附件引用） |
+| `semesters` | 历史兼容表（界面已移除学期分组与筛选；课程跨学期扁平展示，新建作业沿用所选课程的 `semesterId`） |
+| `review_sessions` / `review_items` | 历史兼容表（界面已移除复习入口，仅在数据库与备份恢复中无损保留旧数据） |
 
-富文本：`SpanMark(type,start,end,level)`，类型 BOLD / HIGHLIGHT / HEADING(1-3)，
-纯文本与标记分开存，编辑时按前后缀 diff 重映射（见 `util/RichText.kt`，有单测）。
+- **富文本**：`SpanMark(type, start, end, level)`，类型 `BOLD` / `HIGHLIGHT` / `HEADING(1-3)`。纯文本与标记分开存储，编辑时按前后缀 diff 重映射（见 `util/RichText.kt`）。
+- **截止语义**：仅日期 = 当天结束前（边界为截止时区次日 `00:00`）；日期时间 = 按具体时刻；逾期状态由当前时间与作业保存的 `deadlineZoneId` 实时派生计算。
 
-截止语义：仅日期 = 当天结束前（边界为截止时区次日 00:00）；日期时间 = 按时刻；逾期为派生计算。
+## 3. 核心流程与组件机制
 
-## 3. 核心流程
+### 3.1 单文档编辑器与附件生命周期
+- **标题与草稿**：不设独立标题输入框，正文首行自动生成列表摘要（历史作业标题保留）。输入暂停 500ms 防抖串行落盘草稿，顶部云朵图标仅作保存状态缩放反馈（不可点击）。正式发布前取消并等待防抖任务，在同一 Room 事务内写入作业、内容块并清理对应草稿。
+- **录音与图片**：
+  - `AudioRecorder.kt`：前台申请麦克风权限并录制临时文件，停止成功后转为 `filesDir/audio/<id>.m4a` 正式附件；切后台自动停止并插入，取消则清理临时文件。
+  - `ImagePasteHost`（`ImagePaste.kt`）：包装系统文本粘贴菜单、`Ctrl+V` 与输入法 `commitContent`，显式粘贴后将图片导入 `filesDir/images/<id>.jpg`。
+- **重编辑与删除缝合**（`EditorDocument.kt`）：`editableDocument` 在加载纯图片/纯录音作业时自动补齐首尾可编辑文本位；`removeEditorAttachment` 删除附件时合并两侧文字并平移右侧富文本区间，保留用户输入的空格与换行。
 
-- 新建/编辑：单文档编辑器 → 输入法上方工具条（录音/相册/相机/格式）→ 正式保存（事务写作业+内容块并删草稿）。顶部云朵只反馈保存状态，不提供点击操作。
-- 完成：事务改状态 + `completedAt`，待办消失、档案保留；撤销/恢复清 `completedAt`，不碰 `createdAt`。
-- 复习：开轮时固定作业 ID 快照；结果独立存 `review_items`，原作业只读。
-- 删除：先入回收站（`deletedAt`）；彻底删除清块+文件（先查引用）。
-- 备份：SAF 导出版本化 zip（`manifest.json` 校验 + `data.json` + `assets/`原图 + `audio/`录音）；当前格式 v4 兼容 v1/v2/v3，恢复先全量校验附件再事务覆盖，失败回滚被覆盖文件。
+### 3.2 待办交互、手势左滑与拖拽排序
+- **待办完成与纸片消散**：点击手绘勾选框后由 `AppViewModel` 立即持久化 `DONE` 状态与 `completedAt`（离开页面不中断），`TodoScreen` 保留卡片快照播放 620ms `TileDismiss` 方块纸片消散动画，无撤销 Snackbar。
+- **左滑回收站（`SwipeToTrash.kt`）**：
+  - 单条待办左滑移入回收站（写 `deletedAt`，不改 `TODO/DONE` 状态）。
+  - 课程左滑在单事务内将该课程及名下全部当前未删除的作业写入同一批次 `deletedAt` 时间戳；从回收站恢复课程时仅恢复同批次作业，不误恢复更早单独删除的作业。
+- **长按拖拽排序（`DragOrder.kt`）**：
+  - DataStore `listOrders` 独立保存 `todo`、`courses`、`course:<id>` 三处顺序；筛选状态下拖动仅替换可见项槽位，保留隐藏项位置。
+  - 浮起卡片关闭列表 placement 动画，仅邻项使用弹簧让位；松手后在 220ms 内平滑落位，异步保存完成前保持本地顺序防回跳。
 
-## 4. 测试
+### 3.3 课程模板（`CourseTemplate.kt`）
+- `Course.templateJson` 序列化有序 `BlockJson`、每周截止 `weekday` 与可选 `time`。模板编辑复用 `EditorScreen`（草稿键 `template:<courseId>`，不出现在普通草稿箱）。
+- 仅在新建空白作业并选择课程时自动填入模板内容块并计算最近一个未到期的每周截止日期；已有正文或编辑已发布作业时不覆盖正文。
+- 彻底删除作业、草稿或课程时，引用检查覆盖全部正式作业、普通草稿、课程模板与模板草稿，防止误删共享图片或录音。
 
-- 单元（JVM）：时间边界、排序、筛选、标题生成、span 映射、备份编解码。
-- 界面（模拟器）：仓库往返回归（含完成/回收站数据保持）、自励编辑、新建→完成→归档→复习全链路。
-- UI 定位约定见项目根 `AGENTS.md`（卡片合并、懒列表先滑动）。
+### 3.4 作业截止提醒（`ReminderPlan.kt` + `HomeworkReminders.kt`）
+- 支持两种提醒模式：
+  1. **截止前一天指定时刻**（默认 `09:00`，在截止日 `00:00` 前可补发）；
+  2. **提前指定时长**（`1 / 6 / 12` 小时或 `1 / 2 / 3 / 7` 天；有具体时刻按截止时刻倒推，仅日期按截止当天 `09:00` 倒推，在真实截止边界前可补发）。
+- `HomeworkReminders` 在 Application IO 协程监听 Room 待办与 DataStore 偏好，每次只向系统 `AlarmManager` 注册最早的下一次触发；已授权精确闹钟时使用 `setExactAndAllowWhileIdle`，否则降级为 `setAndAllowWhileIdle`。作业完成、移入回收站、改期或关闭提醒时自动撤销失效通知。
 
-## 5. 编辑页组件与生命周期
+### 3.5 备份与恢复（格式 v4）
+- 通过系统 SAF 导出版本化 `.zip`（`manifest.json` SHA-256 校验 + `data.json` + `assets/` 原图 + `audio/` 录音）。
+- 当前格式为 **v4**（涵盖作业、课程回收状态、课程模板、模板草稿、手动排序、提醒配置及全部引用图片与录音），向下兼容 v1 / v2 / v3 备份包。
+- 恢复时先全量校验清单与附件哈希，再在单一 Room 事务内使用 `@Upsert` 覆盖写入；若文件或数据库阶段失败，自动回滚已覆盖的本地附件文件。
 
-- `EditorControls.kt`：草稿反馈动画、键盘工具栏、带日期/可选时刻的弹窗。
-- `AudioRecorder.kt`：临时录音文件 → 停止成功 → 正式附件；离开前台停止并插入，取消则清理临时文件。
-- `AudioAttachment.kt`：录音播放、进度与暂停，离开页面或进入后台释放/暂停播放器。
-- `PaperTopBar.kt`：统一无色块标题栏，系统栏图标跟随应用自身主题。
-- 编辑状态变动才保存；保存互斥锁、防抖取消与等待共同防止草稿倒序写入。
-- 原标题字段保留用于旧数据和列表展示；编辑器移除标题输入，正文首行生成新作业名称。
+## 4. 发版与官网架构（`.github/workflows/release.yml` + `site/`）
 
-## 交互补充（2026-09-28）
-
-课程界面不再按学期分组；`observeUncatAll` 汇总所有历史学期的未分类记录。
-数据库中的 Semester 及外键仍保留，避免破坏旧记录与备份；编辑时所选课程决定内部 semesterId。
-发布事务结束并删除草稿后，读取剩余草稿并经 postOnMain 返回导航结果，避免 Flow 尚未刷新造成误判。
-待办完成写入由 AppViewModel 持有，离开列表也继续执行；TodoScreen 保留退出快照，TileDismiss 完成且数据库移除该待办后才丢弃快照。
-
-## 课程回收与编辑文档
-
-Course.deletedAt 为可空软删除字段；课程事务删除为此次仍可见作业设置同一批次时间戳，且避开历史回收记录时间戳。恢复课程仅恢复此批次，不改变作业完成状态、createdAt、附件、课程关系。彻底删除课程时一并清理草稿、旧复习关联，并在提交后进行附件引用检查。
-备份格式升至 3 以避免旧版应用忽略课程回收字段；格式 1/2 缺少此字段时默认为 null。
-editableDocument 在加载时补齐非文本附件前后可编辑位置；removeEditorAttachment 合并被附件拆开的文字并平移右侧富文本范围。没有通过 isBlank 去吞掉用户输入的空白字符。
-OpeningAnimation 由进程级 openingShown 和页面保存态控制，只有进程首次进入播放；钢笔平移与墨线终点共用进度，动画可点击跳过。
-
-待办背景由 Notebook 的缓存格线绘制；HomeworkCard 读取正文摘要、课程色与截止信息，提供独立的打开和完成触控区。半透明卡片静止时，SwipeToTrash 不绘制其下的删除提示；滑动时才显示。便签边线和字体仅影响展示，不改写设置内容。
-
-## 模板、剪贴板与手动排序
-
-Course.templateJson 序列化 CourseTemplate（有序 BlockJson、weekday、可选 time），v4→v5 仅添加可空列。模板编辑复用 EditorScreen，通过 templateCourseId 区分保存目标，不创建正式作业。模板草稿独立，保留自动保存及录音生命周期保护。
-
-新建时自动计算最近一次未到期的每周截止日期；仅日期按次日零点计算。模板正文仅应用于空文档，每个块生成新 ID，附件可共享但删除前检查所有模板、草稿与正式作业引用。
-
-ImagePasteHost 包装系统文字工具菜单和 InputConnection，保留 AnnotatedString 富文本；输入法提交 URI 的临时读取权限持续到导入完成。显式点击粘贴后才读取剪贴板内容，附件仍复制到应用私有目录。
-
-DragOrderState 负责长按拖动、邻项换位和边缘滚动；LazyColumn 的位置动画配合拖动卡片抬起反馈。DataStore 保存 todo、courses、course:<id> 三类独立顺序，ViewModel 完成异步写入。筛选下重排只替换可见 ID 的原槽位。
-
-备份格式 v4 新增模板语义和排序偏好；模板引用的图片、录音及尚未提交的模板草稿均纳入备份。
-
-### 拖动动画的连续性
-
-浮起卡片不使用 LazyColumn placement 动画，只有未拖动的邻项使用临界阻尼弹簧让位。手势节点放在缩放/位移图层外，保证输入坐标不随抬起缩放改变。松手保留视觉位置，待最终槽位布局完成后在 220ms 内落位；异步保存未确认前保留本地顺序，避免旧数据回传引发二次交换。换位时固定列表可见索引，避免首项 key 锚定触发整列滚动。
-
-## 作业提醒
-
-ReminderPlan 使用作业保存的截止时区计算两种模式：默认在截止日前一自然日的指定时刻提醒；提前时长模式按具体截止时刻倒推，仅日期则以截止当天 09:00 为基准。前者在截止日零点结束补发，后者以真实截止边界结束补发。只处理未完成、未回收且有有效截止日期的正式作业。
-
-HomeworkReminders 在 Application 的 IO 协程中观察 Room 待办与 DataStore 偏好，互斥更新，只向 AlarmManager 登记下一次最早触发或清理。接收闹钟时重新读取数据并核对；有精确闹钟授权时使用 setExactAndAllowWhileIdle，否则使用 setAndAllowWhileIdle。完成、回收、修改期限或关闭提醒会取消失效通知。
-
-UserPrefs 保存开关、模式、指定时刻和提前时长，均纳入 v4 备份；旧设置默认沿用前一天指定时刻模式。已发送记录独立保存在 reminder_delivery SharedPreferences，系统权限不进入备份。设备重启、更新、系统时间与时区改变后重新安排；强行停止应用后需重新打开。
+- **自动发版流水线**：推送 `v*` 标签（如 `v1.0.1`）时，GitHub Actions 解密签名密钥构建 `:app:assembleRelease`，向 GitHub Releases 上传 `taskra-${TAG}.apk`、`taskra-latest.apk` 与 `taskra-${TAG}.apk.sha256`，随后打包 `site/` 并通过 Wrangler（显式指定 `--branch=main` 生产分支）部署至 Cloudflare Pages（`https://taskra.chengyi.me`）。
+- **官网独立更新**：当 `main` 分支仅修改 `site/**` 或工作流文件时，跳过 Android 编译，直接拉取最新 GitHub Release 的安装包与 SHA-256 同步部署至 Cloudflare Pages，保证两边安装包二进制与校验值严格一致。
+- **前端双源校验（`site/app.js`）**：官网加载时并行请求同源 `version.json` 与 GitHub Releases Latest API，按语义化版本号比对并始终指向最新正式版 APK。

@@ -1,3 +1,9 @@
+# v1.0.1 发布与方格纸官网更新验证（2026-11-03）
+
+- 版本号升级：`app/build.gradle.kts` 更新为 `versionCode = 2`、`versionName = "1.0.1"`，`:app:testDebugUnitTest` 39 项单元测试全部通过。
+- GitHub Releases 发布验证：`v1.0.1` 正式签名版已由 GitHub Actions 构建并发布，包含 `taskra-v1.0.1.apk`、`taskra-latest.apk`（大小 14,753,530 字节，SHA-256 `d8012c67a2c005808393ae881beea961d520ca9f286bfbc20bb483a14a31470a`）与 `taskra-v1.0.1.apk.sha256`。
+- 官网与下载链路验证：修复 Cloudflare Pages 在 tag 游离 HEAD 下落入预览分支的问题（显式指定 `--branch=main`）；生产域名 `https://taskra.chengyi.me/version.json`、`taskra-v1.0.1.apk`、`taskra-latest.apk` 实测返回 HTTP 200 且 SHA-256 与 GitHub Release 完全一致。
+
 # 截止提醒与升级验证（2026-11-02）
 
 - 构建与 JVM 单元测试通过，共 39 项；提醒计划覆盖日期和具体时刻、两种提醒方式、补发边界及旧备份兼容。

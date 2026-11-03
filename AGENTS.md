@@ -9,8 +9,7 @@ UI 测试仅在隔离模拟器运行；`connectedDebugAndroidTest` 可能操作�
 - 每次更新有用户数据的手机应用前，先核对安装包的应用 ID、签名和数据库版本及迁移路径；禁止使用旧数据库版本的构建覆盖新版本，禁止 destructive migration。
 - 更新前保存并校验手机当前数据的完整副本，包含一致的数据库及其 WAL、设置、图片和录音；校验失败或无法确认备份可用时停止安装。不要中断用户正在编辑的内容。
 - 先在隔离模拟器上验证覆盖更新和关键流程；真机禁止卸载、清库或运行会改变真实数据的测试。安装只能使用保留数据的覆盖更新，更新前后及首次启动后逐项核对原有数据库记录、设置和附件内容；出现差异立即停止，保留现场和备份。
-- DAO 写入一律 `@Upsert`，**禁止 `@Insert(onConflict = REPLACE)`**：REPLACE 系先删再插，
-  会触发外键级联（删作业内容块、置空课程归属）。回归测试：`RepoRoundTripTest`。
+- DAO 写入一律 `@Upsert`，**禁止 `@Insert(onConflict = REPLACE)`**：REPLACE 系先删再插，会触发外键级联（删作业内容块、置空课程归属）。回归测试：`RepoRoundTripTest`。
 - 作业状态只有 `TODO`/`DONE`；草稿、逾期（派生计算）、复习中、回收站（`deletedAt`）不进状态字段。
 - 完成/恢复/进出回收站只改状态时间戳，不碰 `createdAt`、内容块、课程归属。
 - DB 升级必须写 `Migration`（见 `data/Migrations.kt`），禁止 destructive 重建用户库。
@@ -36,7 +35,7 @@ UI 测试仅在隔离模拟器运行；`connectedDebugAndroidTest` 可能操作�
 
 - `README.md` — 构建安装、固定版本、设计选择。
 - `TEST-REPORT.md` — 验收对照（已验证/未验证）与修复记录。
-- `docs/ARCHITECTURE.md` — 结构、数据模型、核心流程、备份格式。
+- `docs/ARCHITECTURE.md` — 结构、数据模型、核心流程、备份与发版架构。
 
 ## 编辑页与视觉约定
 
@@ -46,7 +45,7 @@ UI 测试仅在隔离模拟器运行；`connectedDebugAndroidTest` 可能操作�
 - 录音与图文同属有序内容块，必须纳入草稿、正式保存、播放、备份和恢复。
 - DB 当前版本 5；备份格式 4，兼容版本 1/2/3。新增存储字段必须无损迁移。
 
-## 手机反馈后的交互约定
+## 列表、浮窗与完成交互约定
 
 - 搜索、筛选均使用浮窗；取消不更改当前条件。
 - 草稿发布完成后，依据删除当前草稿后的数据库结果决定返回草稿箱还是待办页。
@@ -69,3 +68,8 @@ UI 测试仅在隔离模拟器运行；`connectedDebugAndroidTest` 可能操作�
 - Course.templateJson 保存图文/录音模板和每周截止规则；仅新建作业应用模板，已有正文不覆盖。已发布作业编辑不自动套用。
 - 所有模板附件及模板草稿附件必须参与引用检查，不能在删除某份作业时误删共享附件。
 - 真机有用户数据时，禁止 `connectedDebugAndroidTest`、其他写入测试以及卸载/清库；功能测试在隔离模拟器进行，真机只覆盖安装并核对原始记录、设置与附件。
+
+## 发版与官网约定
+
+- 发版时须同步递增 `app/build.gradle.kts` 的 `versionCode` 与 `versionName`，保证旧版可无损覆盖升级。
+- `.github/workflows/release.yml` 部署 Cloudflare Pages 必须显式传 `--branch=main`（防止 tag 游离 HEAD 部署到预览分支），并同时发布 `taskra-${TAG}.apk`、`taskra-latest.apk` 与 `.sha256`。
