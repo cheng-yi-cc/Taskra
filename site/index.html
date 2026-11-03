@@ -1,61 +1,427 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>课迹 Taskra — 大学生的个人作业本</title>
-  <meta name="description" content="课迹 Taskra：本地优先的大学生个人作业本。记录课程作业，完成后按课程保存，期末重新练习。无账号、无服务器、无广告。仅提供 Android 版。">
+  <title>课迹 Taskra — 方格纸上的大学生个人作业本</title>
+  <meta name="description" content="课迹 Taskra：本地优先的大学生方格纸作业本。支持图文与课堂录音混排、课程模板、自由拖拽排序、准时截止提醒与 v4 完整备份。无账号、无服务器、无广告，仅提供 Android 版。">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="wrap">
-    <header class="hero">
-      <p class="brand">课迹 Taskra</p>
-      <h1>大学生的个人作业本</h1>
-      <p class="tagline">记录课程作业 → 查看未完成 → 完成后按课程保存 → 期末重新练习。</p>
-      <div class="download-card" id="download">
-        <p class="ver">当前版本 <strong id="version">读取中…</strong> · 仅 Android 版</p>
-        <a class="btn" id="downloadBtn" href="https://github.com/cheng-yi-cc/Taskra/releases">下载安装包（APK）</a>
-        <p class="meta" id="updated"></p>
-        <p class="meta mono" id="sha"></p>
-        <p class="meta">如果按钮尚未指向最新包，请前往 <a id="releaseLink" href="https://github.com/cheng-yi-cc/Taskra/releases">GitHub Releases</a> 手动下载。</p>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand-lockup" href="#top" aria-label="课迹 Taskra 首页">
+        <img class="brand-icon" src="favicon.svg" alt="" width="34" height="34">
+        <div class="brand-text">
+          <span class="brand-eyebrow">课迹 &nbsp;/&nbsp; TASKRA</span>
+          <span class="brand-sub">Android 个人作业本</span>
+        </div>
+      </a>
+      <div class="topbar-actions">
+        <a class="topbar-link" href="#features">功能一览</a>
+        <a class="topbar-link" href="#changelog">v1.0.1 更新</a>
+        <a class="topbar-link" href="#install">安装与升级</a>
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="切换浅色或深色纸面">
+          <span class="theme-dot" aria-hidden="true"></span>
+          <span id="themeLabel">暖白方格纸</span>
+        </button>
       </div>
-    </header>
+    </div>
+  </header>
 
-    <section>
-      <h2>为什么用课迹</h2>
-      <ul class="points">
-        <li><strong>本地优先，离线可用</strong>——核心功能全部离线运行，无账号、无服务器、无广告、无埋点。</li>
-        <li><strong>流程简单</strong>——记作业、看未完成、做完归档到课程、期末拿出来重练。</li>
-        <li><strong>状态干净</strong>——作业只有「待办 / 已完成」两种状态，逾期由日期自动算出，不污染数据。</li>
-        <li><strong>备份放心</strong>——一键导出版本化备份包（含题目与图片），换机可恢复。</li>
-      </ul>
+  <main class="wrap" id="top">
+    <section class="hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow">课迹 &nbsp;/&nbsp; TASKRA · LOCAL-FIRST NOTEBOOK</p>
+        <h1 class="hand-display">一页方格纸，<br>记好大学每一门课的作业</h1>
+        <svg class="ink-rule" viewBox="0 0 120 10" aria-hidden="true">
+          <path d="M2,7 C34,1 80,9.2 118,3" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+        </svg>
+        <p class="tagline">
+          随手拍下黑板板书、录下老师口头布置的重点、穿插文字加粗与荧光笔高亮；待办页按轻重缓急一页摊开，做完一笔勾销，纸片消散归入课程。全程离线运行，无账号、无联网权限、无广告埋点。
+        </p>
+
+        <div class="download-sheet" id="download">
+          <div class="download-head">
+            <div class="ver-badge-row">
+              <span class="ver-pill" id="version">v1.0.1</span>
+              <span class="ver-meta" id="updated">正在同步最新 Release…</span>
+            </div>
+            <span class="pkg-tag">包名 <code>com.taskra</code> · Android 8.0+</span>
+          </div>
+
+          <div class="download-cta-row">
+            <a class="btn-primary" id="downloadBtn" href="https://github.com/cheng-yi-cc/Taskra/releases/latest/download/taskra-latest.apk" download>
+              <svg class="btn-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M10 3v10m0 0l-4-4m4 4l4-4M4 16h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span id="downloadBtnText">下载最新安装包（APK）</span>
+            </a>
+            <a class="btn-secondary" id="releaseLink" href="https://github.com/cheng-yi-cc/Taskra/releases/latest" target="_blank" rel="noopener">
+              GitHub Releases
+            </a>
+          </div>
+
+          <div class="download-foot">
+            <p class="meta-line" id="sourceHint">
+              直连最新正式签名 Release 安装包；老版本直接覆盖安装即可无损保留全部作业、图片、录音与设置。
+            </p>
+            <div class="sha-box" id="shaBox">
+              <span class="sha-label">SHA-256</span>
+              <code class="mono" id="sha">正在获取校验值…</code>
+              <button class="copy-btn" id="copyShaBtn" type="button" hidden>复制</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-preview" aria-label="课迹新版界面交互预览">
+        <div class="preview-toolbar">
+          <div class="preview-tabs" role="tablist" aria-label="界面预览切换">
+            <button class="preview-tab active" type="button" role="tab" aria-selected="true" data-tab="todo">待办纸页</button>
+            <button class="preview-tab" type="button" role="tab" aria-selected="false" data-tab="editor">图文录音编辑</button>
+            <button class="preview-tab" type="button" role="tab" aria-selected="false" data-tab="template">课程与模板</button>
+          </div>
+          <span class="preview-hint">可点击勾选体验消散动效</span>
+        </div>
+
+        <div class="phone-frame">
+          <!-- 视图 1：待办页 -->
+          <div class="app-screen active" id="screen-todo" role="tabpanel">
+            <div class="app-header">
+              <div>
+                <div class="app-eyebrow">课迹 &nbsp;/&nbsp; TASKRA</div>
+                <div class="app-title hand">待办</div>
+                <svg class="app-ink-rule" viewBox="0 0 76 7" aria-hidden="true">
+                  <path d="M1,4.6 C21,0.4 51,6.4 75,2.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div class="app-icons">
+                <button class="app-icon-btn" type="button" data-switch-tab="editor" title="打开草稿箱 / 编辑器">
+                  <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                  </svg>
+                  <span class="app-badge">1</span>
+                </button>
+                <span class="app-icon-btn" title="筛选与排序浮窗">
+                  <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M4 6h16M4 12h10M4 18h6"/>
+                  </svg>
+                </span>
+                <span class="app-icon-btn" title="搜索浮窗">
+                  <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
+                  </svg>
+                </span>
+              </div>
+            </div>
+
+            <!-- 给自己的话便签 -->
+            <div class="motto-sheet" id="mottoSheet" title="点击切换示例自励便签">
+              <div class="motto-top">
+                <span class="motto-quote hand">“</span>
+                <span class="motto-label">给自己的话</span>
+                <span class="motto-edit-hint">点击换一句</span>
+              </div>
+              <p class="motto-body hand" id="mottoText">先做好眼前这一件。</p>
+              <svg class="motto-art" viewBox="0 0 260 24" aria-hidden="true">
+                <path d="M4,18 C25,14 47,20 72,16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <g transform="translate(242, 12)" stroke="currentColor" stroke-width="1" stroke-linecap="round">
+                  <line x1="-5" y1="0" x2="5" y2="0"/>
+                  <line x1="0" y1="-5" x2="0" y2="5"/>
+                  <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5"/>
+                  <line x1="-3.5" y1="3.5" x2="3.5" y2="-3.5"/>
+                </g>
+              </svg>
+            </div>
+
+            <div class="todo-summary-row">
+              <span class="todo-count" id="todoCountText">3 项待办 · 1 项逾期</span>
+              <button class="reset-demo-btn" id="resetDemoBtn" type="button" hidden>恢复已勾选演示</button>
+            </div>
+
+            <div class="hw-list" id="hwList">
+              <article class="hw-card" data-id="1">
+                <button class="hw-check" type="button" aria-label="标记完成：高等数学作业">
+                  <svg viewBox="0 0 25 25" width="24" height="24">
+                    <path class="box-stroke" d="M2,3 L22,1 L23,22 L3,23 Z" fill="none" stroke="currentColor" stroke-width="1.3"/>
+                    <path class="tick-stroke" d="M5,12 L11,18 L24,2.5" fill="none" stroke-width="2.4" stroke-linecap="round"/>
+                  </svg>
+                </button>
+                <div class="hw-body">
+                  <h3 class="hw-title hand">习题 3-4 第 2、5、8 题，整理洛必达法则适用条件与反例</h3>
+                  <div class="hw-tags">
+                    <span class="course-chip chip-terracotta">高等数学（上）</span>
+                    <span class="due-text">今天 23:59</span>
+                    <span class="attach-chip">🖼 2</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="hw-card" data-id="2">
+                <button class="hw-check" type="button" aria-label="标记完成：大学物理实验报告">
+                  <svg viewBox="0 0 25 25" width="24" height="24">
+                    <path class="box-stroke" d="M2,3 L22,1 L23,22 L3,23 Z" fill="none" stroke="currentColor" stroke-width="1.3"/>
+                    <path class="tick-stroke" d="M5,12 L11,18 L24,2.5" fill="none" stroke-width="2.4" stroke-linecap="round"/>
+                  </svg>
+                </button>
+                <div class="hw-body">
+                  <h3 class="hw-title hand">霍尔效应测量磁场实验报告，附课堂老师讲解录音与原始数据表</h3>
+                  <div class="hw-tags">
+                    <span class="course-chip chip-moss">大学物理实验</span>
+                    <span class="due-text">周四 18:00</span>
+                    <span class="attach-chip">🎙 1 · 🖼 1</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="hw-card" data-id="3">
+                <button class="hw-check" type="button" aria-label="标记完成：线性代数思考题">
+                  <svg viewBox="0 0 25 25" width="24" height="24">
+                    <path class="box-stroke" d="M2,3 L22,1 L23,22 L3,23 Z" fill="none" stroke="currentColor" stroke-width="1.3"/>
+                    <path class="tick-stroke" d="M5,12 L11,18 L24,2.5" fill="none" stroke-width="2.4" stroke-linecap="round"/>
+                  </svg>
+                </button>
+                <div class="hw-body">
+                  <h3 class="hw-title hand">第三章矩阵初等变换与秩的课后推导题（P86 第 4 题）</h3>
+                  <div class="hw-tags">
+                    <span class="course-chip chip-mustard">线性代数</span>
+                    <span class="due-text overdue">昨天 23:59 · 已逾期</span>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <div class="app-fab-row">
+              <button class="app-fab" type="button" data-switch-tab="editor">
+                <span>✎</span>
+                <span>新建作业</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 视图 2：图文录音编辑页 -->
+          <div class="app-screen" id="screen-editor" role="tabpanel" hidden>
+            <div class="editor-topbar">
+              <button class="editor-back" type="button" data-switch-tab="todo">← 待办</button>
+              <span class="editor-title">记作业</span>
+              <div class="editor-actions">
+                <span class="cloud-status" title="输入暂停 500ms 自动存草稿">☁ 已存草稿</span>
+                <span class="publish-pill" title="正式发布">✓ 发布</span>
+              </div>
+            </div>
+
+            <div class="editor-meta-fixed">
+              <div class="meta-pills">
+                <span class="course-chip chip-moss">课程：大学物理实验</span>
+                <span class="meta-pill">⏰ 周四 18:00（模板自动套用）</span>
+              </div>
+              <div class="editor-section-label">题目与要求（无独立标题栏，首行自动生成摘要）</div>
+            </div>
+
+            <div class="editor-doc">
+              <p class="doc-p">
+                <strong>实验四：霍尔效应测量螺线管磁场分布</strong><br>
+                1. 绘制 <mark class="hl-amber">I<sub>M</sub> 换向与 I<sub>S</sub> 换向</mark> 的四组对称测量曲线，消除不等位电势差与副效应；
+              </p>
+
+              <div class="audio-block">
+                <button class="audio-play-btn" id="audioPlayBtn" type="button" aria-label="试听课堂录音模拟">▶</button>
+                <div class="audio-info">
+                  <div class="audio-title">课堂实验注意事项录音.m4a</div>
+                  <div class="audio-bar"><span class="audio-fill" id="audioFill"></span></div>
+                </div>
+                <span class="audio-time" id="audioTime">00:42</span>
+              </div>
+
+              <div class="image-block">
+                <div class="image-sketch">
+                  <span class="sketch-tag">图片内容块 · filesDir/images/</span>
+                  <div class="sketch-grid">
+                    <span>x (mm)</span><span>0.0</span><span>5.0</span><span>10.0</span><span>15.0</span>
+                    <span>V<sub>H</sub> (mV)</span><span>3.42</span><span>3.40</span><span>3.31</span><span>3.12</span>
+                  </div>
+                </div>
+              </div>
+
+              <p class="doc-p">
+                2. 下周四下午 18:00 前交纸质坐标纸图与误差分析思考题。
+              </p>
+            </div>
+
+            <div class="editor-toolbar">
+              <span class="tool-chip">🎙 录音</span>
+              <span class="tool-chip">🖼 相册</span>
+              <span class="tool-chip">📷 拍照</span>
+              <span class="tool-chip">📋 粘贴图片</span>
+              <span class="tool-chip active">Aa 加粗 / 高亮 / 字号</span>
+            </div>
+          </div>
+
+          <!-- 视图 3：课程与模板 -->
+          <div class="app-screen" id="screen-template" role="tabpanel" hidden>
+            <div class="editor-topbar">
+              <button class="editor-back" type="button" data-switch-tab="todo">← 返回</button>
+              <span class="editor-title hand">大学物理实验</span>
+              <span class="meta-pill">全部状态 · 自定义排序</span>
+            </div>
+
+            <div class="template-sheet">
+              <div class="template-header">
+                <span class="course-chip chip-moss">课程模板已开启</span>
+                <span class="due-text">每周四 18:00 截止</span>
+              </div>
+              <p class="template-desc">
+                新建空白作业并选定本课程时，自动填入预设的「实验数据表图片 + 报告格式要求」并计算最近一个周四 18:00 为截止时间；修改已有作业不会覆盖正文。
+              </p>
+            </div>
+
+            <div class="course-gesture-list">
+              <div class="gesture-item">
+                <strong>⇅ 长按卡片上下拖动排序</strong>
+                <span>待办页、课程列表、课程内作业各自独立保存手动顺序，筛选状态下拖动也会保留隐藏项槽位。</span>
+              </div>
+              <div class="gesture-item">
+                <strong>← 左滑移入回收站（支持整门课程软删除）</strong>
+                <span>课程左滑连同名下全部待办与已完成作业一起移入回收站；恢复课程时仅恢复同批次作业，不误恢复更早单独删除的旧作业。</span>
+              </div>
+              <div class="gesture-item">
+                <strong>🔔 准时截止提醒</strong>
+                <span>支持「截止前一天指定时刻（默认 09:00）」或「提前 1/6/12 小时、1/2/3/7 天」系统级准时提醒。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <section>
-      <h2>主要功能</h2>
-      <ul class="points">
-        <li>按课程记录作业，支持截止日期与时间</li>
-        <li>待办列表一眼看清未完成作业</li>
-        <li>完成后按课程存档，复习时独立练习、不改原记录</li>
-        <li>题目支持富文本（加粗 / 高亮 / 标题）与图片</li>
-        <li>回收站误删可找回，学期归档整洁有序</li>
-      </ul>
+    <section class="notebook-section" id="features">
+      <div class="section-head">
+        <span class="eyebrow">DESIGNED FOR REAL HOMEWORK</span>
+        <h2 class="hand">为记作业这件事打磨的每一个细节</h2>
+        <svg class="ink-rule" viewBox="0 0 92 8" aria-hidden="true">
+          <path d="M1,5.5 C26,1 60,7.5 91,2.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature-sheet">
+          <div class="feature-num">01 · 单文档混排</div>
+          <h3 class="hand">文字、板书照片、粘贴图片与课堂录音同页穿插</h3>
+          <p>
+            不设繁琐的独立标题框与解答区，正文首行自动生成卡片摘要。支持文字<strong>加粗、荧光笔高亮、三档字号</strong>；支持拍照、相册多选、剪贴板一键粘贴图片，以及前台随时录制课堂语音（<code>.m4a</code>）并内嵌回放。
+          </p>
+        </article>
+
+        <article class="feature-sheet">
+          <div class="feature-num">02 · 500ms 防抖草稿</div>
+          <h3 class="hand">写到一半切后台、拍照片，一字不丢</h3>
+          <p>
+            停笔 500ms 自动串行落盘草稿，顶部云朵图标轻微缩放反馈保存状态；返回、切后台或调起相机前自动提交最新内容。待办页右上角草稿箱随时续写或右滑清理。
+          </p>
+        </article>
+
+        <article class="feature-sheet">
+          <div class="feature-num">03 · 课程模板与每周截止</div>
+          <h3 class="hand">移除冗余学期层级，新建作业自动套用课程模板</h3>
+          <p>
+            所有课程直接扁平展示。每门课可单独配置图文/录音模板和「每周几 + 具体时刻」的固定交作业规则；新建空白作业选定课程即自动填入模板与截止日期。
+          </p>
+        </article>
+
+        <article class="feature-sheet">
+          <div class="feature-num">04 · 手势交互与纸片消散</div>
+          <h3 class="hand">长按拖拽排序，勾选完成纸片消散，左滑进回收站</h3>
+          <p>
+            待办、课程列表与课程详情均支持长按拖拽自定义顺序。点击手绘倾斜方框完成作业时，卡片播放 620ms 方块纸片消散动效并自动归入课程；左滑可软删除单条作业或整门课程。
+          </p>
+        </article>
+
+        <article class="feature-sheet">
+          <div class="feature-num">05 · 双模式准时提醒</div>
+          <h3 class="hand">按截止前一天或提前指定时长准时通知</h3>
+          <p>
+            可在「截止前一天指定时刻（默认 09:00）」与「提前 1 / 6 / 12 小时或 1 / 2 / 3 / 7 天」之间自由切换，严格按作业记录时区计算；作业勾选完成、移入回收站或改期后自动撤销失效通知。
+          </p>
+        </article>
+
+        <article class="feature-sheet">
+          <div class="feature-num">06 · 本地优先与 v4 备份</div>
+          <h3 class="hand">零联网权限，一键导出含原图与录音的 ZIP 备份包</h3>
+          <p>
+            全部数据保存在手机本地 Room 数据库与内部存储（<code>filesDir/images</code>、<code>filesDir/audio</code>）。支持导出版本化 <code>.zip</code> 备份包（v4 格式涵盖作业、图片、录音、课程模板、自定义排序与设置，完整兼容 v1–v3）。
+          </p>
+        </article>
+      </div>
     </section>
 
-    <section>
-      <h2>安装方法</h2>
-      <ol class="steps">
-        <li>点击上方按钮下载 <code>.apk</code> 文件（需要 Android 8.0 及以上）。</li>
-        <li>在手机上打开该文件，允许「安装未知应用」后完成安装。</li>
-        <li>首次打开会自动建好默认学期，直接开始记作业。</li>
-      </ol>
+    <section class="notebook-section" id="changelog">
+      <div class="section-head">
+        <span class="eyebrow">WHAT'S NEW IN V1.0.1</span>
+        <h2 class="hand">v1.0.1 版本更新内容</h2>
+        <svg class="ink-rule" viewBox="0 0 92 8" aria-hidden="true">
+          <path d="M1,5.5 C26,1 60,7.5 91,2.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <div class="changelog-card">
+        <div class="changelog-meta">
+          <span class="ver-pill">v1.0.1</span>
+          <span>数据库版本 v5（含 MIGRATION_1_2 → 4_5 无损迁移） · 备份格式 v4</span>
+        </div>
+        <ul class="changelog-list">
+          <li><strong>方格纸与文楷手账界面</strong>：全站升级暖白 <code>#FAF7F2</code> / 暖灰 <code>#1C1917</code> 24dp 方格纸背景，内嵌霞鹜文楷（LXGW WenKai）标题与手绘朱红墨线，新增 1.6 秒钢笔书写开屏动画与自适应主题图标。</li>
+          <li><strong>课堂录音与剪贴板贴图</strong>：编辑器支持录制 <code>.m4a</code> 语音并与图文混排，支持剪贴板一键粘贴图片；纯图片/纯录音作业再次编辑时自动补齐光标输入位，删除附件自动缝合两侧文字与富文本格式。</li>
+          <li><strong>课程模板与拖拽排序</strong>：课程支持预设图文/录音模板及每周截止时间；待办、课程列表、课程内作业全面支持长按上下拖拽排序。</li>
+          <li><strong>手势左滑与整课回收</strong>：待办与课程卡片左滑移入回收站，课程支持连带所属作业成批软删除与原批次恢复；勾选待办采用 620ms 纸片消散动画。</li>
+          <li><strong>精简结构与浮窗交互</strong>：移除旧版「学期管理」与「解答/复习区」（旧数据在数据库与备份中完整兼容保留），搜索与筛选统一收纳为轻量浮窗。</li>
+          <li><strong>作业截止提醒增强</strong>：整合作业提醒设置，支持「截止前一天指定时刻」与「提前指定时长（1/6/12 小时或 1/2/3/7 天）」两种模式并更新通知栏专属图标。</li>
+        </ul>
+      </div>
     </section>
 
-    <footer>
-      <p>课迹 Taskra · 开源协议 Apache-2.0 · <a href="https://github.com/cheng-yi-cc/Taskra">GitHub 仓库</a></p>
+    <section class="notebook-section" id="install">
+      <div class="section-head">
+        <span class="eyebrow">INSTALL &amp; SAFE UPGRADE</span>
+        <h2 class="hand">安装与覆盖升级说明</h2>
+        <svg class="ink-rule" viewBox="0 0 92 8" aria-hidden="true">
+          <path d="M1,5.5 C26,1 60,7.5 91,2.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <div class="install-grid">
+        <div class="install-sheet">
+          <h3 class="hand">首次安装</h3>
+          <ol class="steps">
+            <li>点击页面上方<strong>「下载最新安装包（APK）」</strong>按钮（需 Android 8.0 及以上系统）。</li>
+            <li>在手机系统文件管理或浏览器下载记录中打开该 <code>.apk</code>，按提示允许安装后完成。</li>
+            <li>打开课迹即可直接新建作业或建立课程；如需准时提醒，可在「设置 → 作业提醒」中开启通知权限。</li>
+          </ol>
+        </div>
+
+        <div class="install-sheet upgrade-highlight">
+          <h3 class="hand">老版本升级（保护已有数据）</h3>
+          <ol class="steps">
+            <li><strong>请勿卸载旧版本</strong>：卸载会由系统清空应用沙盒内的本地数据库与图片、录音附件。</li>
+            <li>建议升级前先在旧版「设置 → 备份与恢复」中点击<strong>「导出完整备份」</strong>保存一份 <code>.zip</code> 备份包。</li>
+            <li>直接下载最新版正式包（包名 <code>com.taskra</code>）并<strong>覆盖安装</strong>，应用启动时会自动执行 Room 无损迁移（v1 → v5），完整保留原有作业、课程、图片、录音与设置。</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <p>
+        课迹 Taskra · 开源协议 Apache-2.0 · 字体采用霞鹜文楷 Lite（OFL-1.1） ·
+        <a href="https://github.com/cheng-yi-cc/Taskra" target="_blank" rel="noopener">GitHub 仓库</a> ·
+        <a href="https://github.com/cheng-yi-cc/Taskra/releases" target="_blank" rel="noopener">历史版本 Releases</a>
+      </p>
     </footer>
   </main>
+
   <script src="app.js"></script>
 </body>
 </html>

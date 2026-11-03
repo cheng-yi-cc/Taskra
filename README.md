@@ -63,8 +63,8 @@ cd "D:\My Project\Taskra"
  （该文件已进 `.gitignore`，不会提交）；CI 走同名环境变量
   `TASKRA_KEYSTORE_FILE / TASKRA_KEYSTORE_PASSWORD / TASKRA_KEY_ALIAS / TASKRA_KEY_PASSWORD`，
   密钥内容存 GitHub Secrets（`ANDROID_KEYSTORE_BASE64` 等），仓库里只有示例文件。
-- 官网源码在 `site/`（纯静态：`index.html` + `styles.css` + `app.js` + `version.json`），
-  暖色极简风格；页面启动时读 `version.json` 自动指向最新安装包，仅提供 Android 版。
+- 官网源码在 `site/`（纯静态：`index.html` + `styles.css` + `app.js` + `favicon.svg` + `version.json`），
+  采用与新应用一致的方格纸 + 霞鹜文楷手账风格；页面启动时同时校验同源 `version.json` 与 GitHub Releases 最新版 API，始终指向最新正式版安装包，仅提供 Android 版。
 
 ## 关键设计选择记录
 - 作业状态只有 `TODO/DONE`；草稿、逾期（派生）、复习中、回收站（`deletedAt`）都不进状态字段。

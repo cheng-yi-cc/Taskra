@@ -1,8 +1,9 @@
 {
-  "version": "v0.0.0",
-  "apk": "https://github.com/cheng-yi-cc/Taskra/releases",
-  "latest": "https://github.com/cheng-yi-cc/Taskra/releases",
+  "version": "v1.0.1",
+  "apk": "https://github.com/cheng-yi-cc/Taskra/releases/download/v1.0.1/taskra-v1.0.1.apk",
+  "latest": "https://github.com/cheng-yi-cc/Taskra/releases/latest/download/taskra-latest.apk",
+  "githubApk": "https://github.com/cheng-yi-cc/Taskra/releases/download/v1.0.1/taskra-v1.0.1.apk",
   "sha256": "",
-  "updated": "",
-  "releaseUrl": "https://github.com/cheng-yi-cc/Taskra/releases"
+  "updated": "2026-11-03T00:00:00Z",
+  "releaseUrl": "https://github.com/cheng-yi-cc/Taskra/releases/tag/v1.0.1"
 }
