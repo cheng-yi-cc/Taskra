@@ -1,44 +1,24 @@
 package com.taskra.ui.screens
 
-import com.taskra.ui.components.notebookPaper
-
-import androidx.compose.foundation.lazy.rememberLazyListState
-import com.taskra.ui.components.rememberDragOrder
-import com.taskra.ui.components.reorderItemModifier
-import com.taskra.util.ordered
-
-
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -48,31 +28,30 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import com.taskra.ui.components.PaperTopBar as TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.taskra.TaskraApp
-import com.taskra.data.ReviewSession
-import com.taskra.data.SessionStatus
 import com.taskra.data.Status
 import com.taskra.ui.AppViewModel
 import com.taskra.ui.TodoUiItem
 import com.taskra.ui.components.HomeworkCard
+import com.taskra.ui.components.NotebookEmpty
+import com.taskra.ui.components.PaperTopBar as TopAppBar
+import com.taskra.ui.components.notebookPaper
+import com.taskra.ui.components.rememberDragOrder
+import com.taskra.ui.components.reorderItemModifier
 import com.taskra.util.TimeUtils
-import com.taskra.util.postOnMain
+import com.taskra.util.ordered
 import kotlinx.coroutines.launch
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,11 +79,7 @@ fun CourseDetailScreen(
     var showCourseActions by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
     var renameError by remember { mutableStateOf<String?>(null) }
-    var showEndOld by remember { mutableStateOf<ReviewSession?>(null) }
 
-    val course by remember(courseId) {
-        mutableStateOf<String?>(null)
-    }
     var courseName by remember { mutableStateOf("") }
     var courseObj by remember { mutableStateOf<com.taskra.data.Course?>(null) }
     LaunchedEffect(courseId) {
@@ -174,9 +149,7 @@ fun CourseDetailScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { onNewHomework(semId, courseId) }) {
-                Icon(Icons.Outlined.Add, contentDescription = "在此课程新建作业")
-            }
+            com.taskra.ui.components.NotebookFab("在此课程新建作业", onClick = { onNewHomework(semId, courseId) })
         },
     ) { pad ->
         LazyColumn(
@@ -195,41 +168,35 @@ fun CourseDetailScreen(
             }
             if (sorted.isEmpty()) {
                 item {
-                    Box(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(5.dp))
-                            .background(MaterialTheme.colorScheme.surface).padding(24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            when (tab) {
-                                "DONE" -> "暂无已完成作业"
-                                "TODO" -> "暂无未完成作业"
-                                else -> "暂无作业"
-                            },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    NotebookEmpty(
+                        when (tab) {
+                            "DONE" -> "暂无已完成作业"
+                            "TODO" -> "暂无未完成作业"
+                            else -> "暂无作业"
+                        }
+                    )
                 }
             } else {
                 items(displayedItems, key = { it.id }) { h ->
-                    val c = h.courseId?.let { null } // 课程页内不再重复取
                     val overdue = TimeUtils.isOverdue(h.deadlineType, h.deadlineDate, h.deadlineTime, h.deadlineZoneId)
-                    Box(reorderItemModifier(drag, h.id).testTag("drag_homework:${h.id}")) { HomeworkCard(
-                        item = TodoUiItem(
-                            h, courseName.ifBlank { null }, courseObj?.colorIndex ?: 0,
-                            overdue,
-                            TimeUtils.formatDeadline(h.deadlineType, h.deadlineDate, h.deadlineTime, h.deadlineZoneId),
-                            "", 0,
-                        ),
-                        done = h.status == Status.DONE,
-                        onOpen = { onOpenHomework(h.id) },
-                        onToggleDone = {
-                            scope.launch {
-                                if (h.status == Status.DONE) app.repo.markTodo(h.id)
-                                else app.repo.markDone(h.id)
-                            }
-                        },
-                    ) }
+                    Box(reorderItemModifier(drag, h.id).testTag("drag_homework:${h.id}")) {
+                        HomeworkCard(
+                            item = TodoUiItem(
+                                h, courseName.ifBlank { null }, courseObj?.colorIndex ?: 0,
+                                overdue,
+                                TimeUtils.formatDeadline(h.deadlineType, h.deadlineDate, h.deadlineTime, h.deadlineZoneId),
+                                "", 0,
+                            ),
+                            done = h.status == Status.DONE,
+                            onOpen = { onOpenHomework(h.id) },
+                            onToggleDone = {
+                                scope.launch {
+                                    if (h.status == Status.DONE) app.repo.markTodo(h.id)
+                                    else app.repo.markDone(h.id)
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -239,17 +206,19 @@ fun CourseDetailScreen(
         AlertDialog(
             onDismissRequest = { showFilter = false },
             title = { Text("筛选与排序") },
-            text = { Column {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("ALL" to "全部", "TODO" to "未完成", "DONE" to "已完成").forEach { (value, label) ->
-                        FilterChip(selected = pendingTab == value, onClick = { pendingTab = value }, label = { Text(label) })
+            text = {
+                Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("ALL" to "全部", "TODO" to "未完成", "DONE" to "已完成").forEach { (value, label) ->
+                            FilterChip(selected = pendingTab == value, onClick = { pendingTab = value }, label = { Text(label) })
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !pendingNewest, onClick = { pendingNewest = false }, label = { Text("从早到晚") })
+                        FilterChip(selected = pendingNewest, onClick = { pendingNewest = true }, label = { Text("最新优先") })
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = !pendingNewest, onClick = { pendingNewest = false }, label = { Text("从早到晚") })
-                    FilterChip(selected = pendingNewest, onClick = { pendingNewest = true }, label = { Text("最新优先") })
-                }
-            } },
+            },
             confirmButton = { TextButton(onClick = { tab = pendingTab; sortNewest = pendingNewest; manual = false; showFilter = false }) { Text("应用") } },
             dismissButton = { TextButton(onClick = { showFilter = false }) { Text("取消") } },
         )

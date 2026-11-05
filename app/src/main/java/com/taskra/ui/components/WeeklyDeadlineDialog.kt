@@ -14,7 +14,8 @@ import androidx.compose.ui.unit.dp
 fun WeeklyDeadlineDialog(day: Int?, time: String?, onDismiss: () -> Unit, onApply: (Int?, String?) -> Unit) {
     var selected by remember { mutableStateOf(day) }
     var timed by remember { mutableStateOf(time != null) }
-    val clock = rememberTimePickerState(time?.substringBefore(":")?.toIntOrNull() ?: 18, time?.substringAfter(":")?.toIntOrNull() ?: 0, true)
+    val now = remember { java.time.LocalTime.now() }
+    val clock = rememberTimePickerState(time?.substringBefore(":")?.toIntOrNull() ?: now.hour, time?.substringAfter(":")?.toIntOrNull() ?: now.minute, true)
     AlertDialog(
         onDismissRequest = onDismiss, title = { Text("每周截止时间") },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) {

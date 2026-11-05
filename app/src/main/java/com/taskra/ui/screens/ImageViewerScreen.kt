@@ -35,17 +35,22 @@ import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ImageViewerScreen(app: TaskraApp, homeworkId: String, startIndex: Int, onBack: () -> Unit) {
-    var images by remember { mutableStateOf(listOf<String>()) }
-    var index by remember { mutableStateOf(startIndex) }
-    LaunchedEffect(homeworkId) {
+fun ImageViewerScreen(app: TaskraApp, homeworkId: String, startImageId: String, onBack: () -> Unit) {
+    var images by remember { mutableStateOf(listOf(startImageId)) }
+    var index by remember { mutableStateOf(0) }
+    LaunchedEffect(homeworkId, startImageId) {
         try {
             val all = app.repo.db.blockDao().listByHomework(homeworkId)
-            images = (all.filter { it.region == BlockRegion.QUESTION } +
+            val stored = (all.filter { it.region == BlockRegion.QUESTION } +
                 all.filter { it.region == BlockRegion.SOLUTION })
                 .filter { it.kind == BlockKind.IMAGE }
                 .mapNotNull { it.imageId }
+            // 未落库的新图不在列表里：退化为只看这一张。
+            images = if (stored.contains(startImageId)) stored else listOf(startImageId)
+            index = images.indexOf(startImageId).coerceAtLeast(0)
         } catch (_: Exception) {
+            images = listOf(startImageId)
+            index = 0
         }
     }
     var scale by remember { mutableStateOf(1f) }

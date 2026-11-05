@@ -48,6 +48,7 @@ class PrefsRepository(private val context: Context) {
     private val K_SEMESTER = stringPreferencesKey("current_semester")
     private val K_BACKUP = longPreferencesKey("last_backup_time")
     private val K_SYNC_CHANGED = longPreferencesKey("sync_settings_changed_at")
+    private val K_IGNORED_UPDATE = stringPreferencesKey("ignored_update_version")
 
     private suspend fun mutate(block: (MutablePreferences) -> Unit) = SyncGates.preferences.withLock {
         context.prefsStore.edit { p ->
@@ -114,6 +115,12 @@ class PrefsRepository(private val context: Context) {
     /** 只有真正导出成功后调用。 */
     suspend fun setLastBackupTime(t: Long) {
         context.prefsStore.edit { it[K_BACKUP] = t }
+    }
+    suspend fun getIgnoredUpdateVersion(): String? = context.prefsStore.data.first()[K_IGNORED_UPDATE]
+    suspend fun setIgnoredUpdateVersion(version: String?) {
+        context.prefsStore.edit { e ->
+            if (version.isNullOrBlank()) e.remove(K_IGNORED_UPDATE) else e[K_IGNORED_UPDATE] = version
+        }
     }
 
     suspend fun snapshot(): UserPrefs {

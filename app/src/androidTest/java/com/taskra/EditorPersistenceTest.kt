@@ -45,7 +45,7 @@ class EditorPersistenceTest {
         assertEquals(DeadlineType.NONE, runBlocking { app.repo.getDraft("new") }!!.deadlineType)
         rule.onNodeWithTag("deadline_button").performClick()
         rule.onNodeWithTag("deadline_confirm").performClick()
-        rule.onNodeWithContentDescription("确定").performClick()
+        rule.onNodeWithContentDescription("保存").performClick()
         rule.waitUntil(8000) { rule.onAllNodesWithTag("publish_homework").fetchSemanticsNodes().isEmpty() }
         rule.mainClock.advanceTimeBy(1000)
         runBlocking {

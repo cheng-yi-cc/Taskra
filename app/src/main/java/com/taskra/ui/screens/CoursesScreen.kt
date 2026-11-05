@@ -1,64 +1,67 @@
 package com.taskra.ui.screens
 
-import com.taskra.ui.components.notebookPaper
-
-import androidx.compose.foundation.lazy.rememberLazyListState
-import com.taskra.ui.components.rememberDragOrder
-import com.taskra.ui.components.reorderItemModifier
-import com.taskra.util.ordered
-
-
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import com.taskra.ui.components.SwipeToTrash
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.taskra.TaskraApp
 import com.taskra.data.Course
 import com.taskra.data.Semester
 import com.taskra.data.Status
 import com.taskra.ui.AppViewModel
+import com.taskra.ui.components.NotebookEmpty
+import com.taskra.ui.components.SwipeToTrash
+import com.taskra.ui.components.notebookPaper
+import com.taskra.ui.components.rememberDragOrder
+import com.taskra.ui.components.reorderItemModifier
+import com.taskra.ui.theme.NotebookHand
+import com.taskra.ui.theme.courseColor
+import com.taskra.util.ordered
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -114,19 +117,25 @@ fun CoursesScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .notebookPaper()
-                .padding(pad).testTag("courses_list"),
+                .padding(pad)
+                .testTag("courses_list"),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp, 16.dp, 24.dp, 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
                 com.taskra.ui.components.NotebookHeading("课程")
                 Spacer(Modifier.height(4.dp))
-
+            }
+            if (displayedCourses.isEmpty()) {
+                item {
+                    NotebookEmpty("暂无课程")
+                }
             }
             items(displayedCourses, key = { it.id }) { c ->
                 SwipeToTrash(
                     enabled = drag.dragging == null,
-                    modifier = reorderItemModifier(drag, c.id).testTag("swipe_course:${c.id}"), resetKey = swipeReset,
+                    modifier = reorderItemModifier(drag, c.id).testTag("swipe_course:${c.id}"),
+                    resetKey = swipeReset,
                     onDelete = { vm.trashCourse(c.id) { swipeReset++; scope.launch { snackbar.showSnackbar("删除失败，请重试") } } },
                 ) { CourseCard(app, c, onOpen = { onOpenCourse(c.id) }) }
             }
@@ -197,27 +206,49 @@ private fun CourseCard(app: TaskraApp, c: Course, onOpen: () -> Unit) {
     val total = list.size
     val undone = list.count { it.status == Status.TODO }
     val done = total - undone
-    Card(
+    val marker = courseColor(c.colorIndex)
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < .5f
+    val markerText = lerp(marker, MaterialTheme.colorScheme.onSurface, if (isDark) .38f else .24f)
+
+    Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         shape = RoundedCornerShape(5.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(0.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .drawBehind {
+                    drawLine(
+                        color = marker.copy(alpha = if (isDark) 0.78f else 0.70f),
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, size.height),
+                        strokeWidth = 3.5.dp.toPx(),
+                    )
+                }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(com.taskra.ui.theme.courseColor(c.colorIndex).copy(alpha = 0.2f))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(marker.copy(alpha = if (isDark) 0.24f else 0.16f)),
+                contentAlignment = Alignment.Center,
             ) {
-                Text(c.name.take(1), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    c.name.take(1),
+                    style = MaterialTheme.typography.titleLarge.copy(fontFamily = NotebookHand, fontSize = 21.sp),
+                    color = markerText,
+                )
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(c.name, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    c.name,
+                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = NotebookHand, fontSize = 19.sp),
+                )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     "$undone 项待办 · $done 项完成" + if (!c.isActive) " · 已停用" else "",
@@ -225,6 +256,12 @@ private fun CourseCard(app: TaskraApp, c: Course, onOpen: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            Icon(
+                Icons.Outlined.ChevronRight,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+            )
         }
     }
 }
@@ -233,14 +270,15 @@ private fun CourseCard(app: TaskraApp, c: Course, onOpen: () -> Unit) {
 private fun UncatCard(app: TaskraApp, semesterId: String, onOpenHomework: (String) -> Unit, onOpenUncat: (String) -> Unit) {
     val uncat by app.repo.db.homeworkDao().observeUncatAll().collectAsState(initial = emptyList())
     if (uncat.isEmpty()) return
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth().clickable { onOpenUncat(semesterId) },
         shape = RoundedCornerShape(5.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(16.dp)) {
-            Text("未分类", style = MaterialTheme.typography.titleMedium)
-            Text("${uncat.size} 项作业", style = MaterialTheme.typography.bodyMedium)
+            Text("未分类", style = MaterialTheme.typography.titleMedium.copy(fontFamily = NotebookHand, fontSize = 19.sp))
+            Text("${uncat.size} 项作业", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
             uncat.take(3).forEach { h ->
                 Text(

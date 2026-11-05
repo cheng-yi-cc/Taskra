@@ -1,0 +1,6 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- 深色模式下的窗口底色：避免启动/切换瞬间先闪一下白底。 -->
+    <style name="Theme.Taskra" parent="android:Theme.Material.NoActionBar">
+        <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
+    </style>
+</resources>

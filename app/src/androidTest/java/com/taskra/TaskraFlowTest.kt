@@ -137,7 +137,7 @@ class TaskraFlowTest {
         rule.onAllNodesWithTag("question_text")[0].performTextInput(hwTitle + "\n第一段题目要求")
         // 选课程：已自动带入，确认显示课程名即可
         rule.onNodeWithText(courseName, useUnmergedTree = true).assertExists()
-        rule.onNodeWithContentDescription("确定").performClick()
+        rule.onNodeWithContentDescription("保存").performClick()
         // 保存后经主线程返回课程详情
         rule.waitUntil(8000) { contentDescExists("在此课程新建作业") }
         // 课程详情页无底部导航，先返回课程列表

@@ -148,7 +148,7 @@ fun DeadlineDialog(
     onConfirm: (String, String?, String?) -> Unit,
 ) {
     val initialDate = remember { runCatching { LocalDate.parse(date) }.getOrDefault(LocalDate.now()) }
-    val initialTime = remember { runCatching { LocalTime.parse(time) }.getOrDefault(LocalTime.of(18, 0)) }
+    val initialTime = remember { runCatching { LocalTime.parse(time) }.getOrDefault(LocalTime.now()) }
     var selectedDate by remember { mutableStateOf(initialDate) }
     val timeState = rememberTimePickerState(initialTime.hour, initialTime.minute, is24Hour = true)
     var withTime by remember { mutableStateOf(type == DeadlineType.DATETIME) }

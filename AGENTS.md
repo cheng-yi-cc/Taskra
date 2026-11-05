@@ -9,8 +9,7 @@ UI 测试仅在隔离模拟器运行；`connectedDebugAndroidTest` 可能操作�
 - 每次更新有用户数据的手机应用前，先核对安装包的应用 ID、签名和数据库版本及迁移路径；禁止使用旧数据库版本的构建覆盖新版本，禁止 destructive migration。
 - 更新前保存并校验手机当前数据的完整副本，包含一致的数据库及其 WAL、设置、图片和录音；校验失败或无法确认备份可用时停止安装。不要中断用户正在编辑的内容。
 - 先在隔离模拟器上验证覆盖更新和关键流程；真机禁止卸载、清库或运行会改变真实数据的测试。安装只能使用保留数据的覆盖更新，更新前后及首次启动后逐项核对原有数据库记录、设置和附件内容；出现差异立即停止，保留现场和备份。
-- DAO 写入一律 `@Upsert`，**禁止 `@Insert(onConflict = REPLACE)`**：REPLACE 系先删再插，
-  会触发外键级联（删作业内容块、置空课程归属）。回归测试：`RepoRoundTripTest`。
+- DAO 写入一律 `@Upsert`，**禁止 `@Insert(onConflict = REPLACE)`**：REPLACE 系先删再插，会触发外键级联（删作业内容块、置空课程归属）。回归测试：`RepoRoundTripTest`。
 - 作业状态只有 `TODO`/`DONE`；草稿、逾期（派生计算）、复习中、回收站（`deletedAt`）不进状态字段。
 - 完成/恢复/进出回收站只改状态时间戳，不碰 `createdAt`、内容块、课程归属。
 - DB 升级必须写 `Migration`（见 `data/Migrations.kt`），禁止 destructive 重建用户库。
@@ -20,11 +19,12 @@ UI 测试仅在隔离模拟器运行；`connectedDebugAndroidTest` 可能操作�
 - 跟随 Room 挂起调用后的导航回调，必须经 `postOnMain` 切回真实主线程（测试调度器下会崩）。
 - 正式保存前先取消待触发的自动保存 `saveJob`，再删草稿，否则旧草稿复活覆盖。
 
-## UI 约束
+## UI 与外观约束
 
-- 主题：暖白 `#FAF7F2` + 番茄红 `#B94335`；禁止蓝紫主视觉、动态取色、大面积渐变。
-- 编辑器单文档模型：`ContentBlock`（TEXT/IMAGE/AUDIO + `spanJson` 富文本标记），图片只存 `filesDir/images/<id>.jpg`，录音只存 `filesDir/audio/<id>.m4a`。
-- 解答区已删除：只记题目（QUESTION），SOLUTION 为历史数据，仅备份兼容，不再创建与展示。
+- 主题：暖白 `#FAF7F2` + 番茄红 `#B94335`；禁止蓝紫主视觉、动态取色、大面积渐变。新建作业/新建课程统一为加号圆形 FAB（取主题主色，不用墨黑底色）。
+- 外观三选一存 DataStore（跟随系统/浅色/深色）；主 Activity 声明 `configChanges="uiMode"` 自行处理，`systemDark` 经 `Settings.Secure("ui_night_mode")`、`UiModeManager.nightMode` 与 `Configuration.uiMode` 多源解析并配合 `ContentObserver` 实时刷新（兼容澎湃 OS/MIUI）；另有 `values-night` 窗口底色防切色闪白。
+- 编辑器单文档模型：`ContentBlock`（TEXT/IMAGE/AUDIO + `spanJson` 富文本标记），图片只存 `filesDir/images/<id>.jpg`，录音只存 `filesDir/audio/<id>.m4a`。只记题目（QUESTION），SOLUTION 为历史兼容。
+- 已有作业直接进入可编辑页（无只读详情页，共享内容块渲染见 `BlockView.kt`）；右上角为保存、完成/恢复、删除（移入回收站）。
 
 ## UI 测试定位约定
 
@@ -36,21 +36,21 @@ UI 测试仅在隔离模拟器运行；`connectedDebugAndroidTest` 可能操作�
 
 - `README.md` — 构建安装、固定版本、设计选择。
 - `TEST-REPORT.md` — 验收对照（已验证/未验证）与修复记录。
-- `docs/ARCHITECTURE.md` — 结构、数据模型、核心流程、备份格式。
+- `docs/ARCHITECTURE.md` — 结构、数据模型、核心流程、备份与发版架构。
 
 ## 编辑页与视觉约定
 
-- 不提供标题输入；草稿状态图标不可点击，只有正式发布图标可点击。
+- 不提供标题输入；草稿状态图标不可点击，保存图标可点击。
 - 删除功能说明段落，保留内容、功能名称与必要错误提示；主题遵循暖白纸感。
 - 截止时间默认 NONE，只选日期时次日零点才算逾期；日期弹窗取消不提交临时选择。
 - 录音与图文同属有序内容块，必须纳入草稿、正式保存、播放、备份和恢复。
-- DB 当前版本 6；通过 `MIGRATION_5_6` 添加默认关闭的同步日志，备份格式仍为 4，兼容版本 1/2/3。同步功能尚在开发，不得宣称已可使用。新增存储字段必须无损迁移。
+- DB 当前版本 6；通过 `MIGRATION_5_6` 添加默认关闭的同步日志，备份格式仍为 4，兼容版本 1/2/3。新增存储字段必须无损迁移；同步验收范围与未验证项见 `docs/SYNC-DESIGN.md`。
 
-## 手机反馈后的交互约定
+## 列表、浮窗与完成交互约定
 
 - 搜索、筛选均使用浮窗；取消不更改当前条件。
 - 草稿发布完成后，依据删除当前草稿后的数据库结果决定返回草稿箱还是待办页。
-- 待办完成没有成功 Snackbar；先持久化，同时保留卡片快照播放消散动画。
+- 待办完成没有成功 Snackbar；先持久化，再播放两段动效（方框内约 320ms 画对钩，随后整张卡片纸片消散）；从作业编辑页点“完成”返回待办时，用 `AppViewModel` 快照补播同一动效。写入失败须把卡片放回列表并提示。
 - 编辑页元信息固定，正文独立滚动；占位文字仅在整个文档为空时显示一次。
 - 不再展示学期管理、学期筛选；历史学期字段保留用于无损兼容，课程跨学期展示。
 
@@ -69,3 +69,9 @@ UI 测试仅在隔离模拟器运行；`connectedDebugAndroidTest` 可能操作�
 - Course.templateJson 保存图文/录音模板和每周截止规则；仅新建作业应用模板，已有正文不覆盖。已发布作业编辑不自动套用。
 - 所有模板附件及模板草稿附件必须参与引用检查，不能在删除某份作业时误删共享附件。
 - 真机有用户数据时，禁止 `connectedDebugAndroidTest`、其他写入测试以及卸载/清库；功能测试在隔离模拟器进行，真机只覆盖安装并核对原始记录、设置与附件。
+
+## 发版、官网与应用内更新约定
+
+- `app/build.gradle.kts` 支持从环境变量 `TASKRA_VERSION` / `TAG` 自动推导 `versionName` 与递增 `versionCode`；发版时同步更新默认版本号，保证旧版可无损覆盖升级。
+- `.github/workflows/release.yml` 部署 Cloudflare Pages 必须显式传 `--branch=main`，并同时发布 `taskra-${TAG}.apk`、`taskra-latest.apk` 与 `.sha256`。
+- 应用内更新（`update/AppUpdater.kt`）直连 GitHub Releases Latest API，下载 APK 后必须验证 SHA-256、包名与签名才经 `FileProvider` 调起安装器；忽略版本仅保存在设备本地。

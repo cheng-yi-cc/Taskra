@@ -18,6 +18,7 @@ import com.taskra.util.SystemClock
 import com.taskra.reminders.HomeworkReminders
 import com.taskra.sync.SyncJournalSchema
 import com.taskra.sync.SyncCoordinator
+import com.taskra.update.AppUpdater
 
 class TaskraApp : Application() {
     var openingShown = false
@@ -34,6 +35,8 @@ class TaskraApp : Application() {
     lateinit var reminders: HomeworkReminders
         private set
     internal lateinit var sync: SyncCoordinator
+        private set
+    lateinit var updater: AppUpdater
         private set
 
     val clock = SystemClock
@@ -55,5 +58,6 @@ class TaskraApp : Application() {
         sync = SyncCoordinator(this, db)
         reminders = HomeworkReminders(this)
         reminders.start()
+        updater = AppUpdater(this)
     }
 }

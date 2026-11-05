@@ -1,38 +1,45 @@
 package com.taskra
 
-import android.os.Bundle
+import android.app.UiModeManager
+import android.content.ComponentCallbacks
 import android.content.Intent
+import android.content.res.Configuration
+import android.content.res.Resources
+import android.database.ContentObserver
 import android.net.Uri
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.ui.Alignment
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
-import com.taskra.ui.components.OpeningAnimation
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -44,11 +51,11 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.taskra.data.ThemeMode
 import com.taskra.ui.AppViewModel
+import com.taskra.ui.components.OpeningAnimation
 import com.taskra.ui.screens.CourseDetailScreen
 import com.taskra.ui.screens.CoursesScreen
 import com.taskra.ui.screens.DraftsScreen
 import com.taskra.ui.screens.EditorScreen
-import com.taskra.ui.screens.HomeworkDetailScreen
 import com.taskra.ui.screens.ImageViewerScreen
 import com.taskra.ui.screens.ReviewScreen
 import com.taskra.ui.screens.SettingsScreen
@@ -59,9 +66,84 @@ import com.taskra.ui.theme.TaskraTheme
 class MainActivity : ComponentActivity() {
     private var reminderHomeworkId by mutableStateOf<String?>(null)
 
+    /**
+     * 系统是否处于深色模式。
+     * 在红米/小米澎湃 OS (HyperOS / MIUI) 等定制 ROM 上，非白名单应用的 Activity
+     * Configuration.uiMode 可能被系统“单应用深色策略”拦截，且下拉控制中心切换深浅色时
+     * Activity 未必重建或触发 onResume。因此通过：
+     * 1) Settings.Secure("ui_night_mode") + UiModeManager.nightMode + Configuration.uiMode 多源读取；
+     * 2) ContentObserver 实时监听 ui_night_mode 变化 + Application ComponentCallbacks +
+     *    Activity onConfigurationChanged / onStart / onResume / onWindowFocusChanged 全链路刷新，
+     * 确保前台下拉控制中心秒切、分屏/小窗实时切换、切后台返回均立即生效。
+     */
+    private var systemDark by mutableStateOf(false)
+
+    private fun nightOf(config: Configuration): Boolean =
+        (config.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    private fun resolveSystemDark(configHint: Configuration? = null): Boolean {
+        val secureMode = runCatching {
+            Settings.Secure.getInt(contentResolver, "ui_night_mode", -1)
+        }.getOrDefault(-1)
+        if (secureMode == UiModeManager.MODE_NIGHT_YES) return true
+        if (secureMode == UiModeManager.MODE_NIGHT_NO) return false
+
+        val uiModeManager = getSystemService(UiModeManager::class.java)
+        when (uiModeManager?.nightMode) {
+            UiModeManager.MODE_NIGHT_YES -> return true
+            UiModeManager.MODE_NIGHT_NO -> return false
+        }
+
+        if (configHint != null) return nightOf(configHint)
+        return nightOf(Resources.getSystem().configuration) ||
+            nightOf(applicationContext.resources.configuration) ||
+            nightOf(resources.configuration)
+    }
+
+    private fun refreshSystemDark(configHint: Configuration? = null) {
+        systemDark = resolveSystemDark(configHint)
+    }
+
+    private val nightModeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            refreshSystemDark()
+        }
+    }
+
+    private val appConfigCallbacks = object : ComponentCallbacks {
+        override fun onConfigurationChanged(newConfig: Configuration) {
+            refreshSystemDark(newConfig)
+        }
+
+        override fun onLowMemory() = Unit
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        refreshSystemDark(newConfig)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        refreshSystemDark()
+    }
+
     override fun onResume() {
         super.onResume()
+        refreshSystemDark()
         (application as TaskraApp).reminders.refresh()
+        (application as TaskraApp).updater.onAppResumed()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) refreshSystemDark()
+    }
+
+    override fun onDestroy() {
+        runCatching { contentResolver.unregisterContentObserver(nightModeObserver) }
+        runCatching { applicationContext.unregisterComponentCallbacks(appConfigCallbacks) }
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -72,6 +154,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) reminderHomeworkId = intent.getStringExtra(com.taskra.reminders.HomeworkReminders.EXTRA_HOMEWORK_ID)
+        refreshSystemDark()
+        runCatching {
+            contentResolver.registerContentObserver(
+                Settings.Secure.getUriFor("ui_night_mode"),
+                false,
+                nightModeObserver,
+            )
+        }
+        runCatching { applicationContext.registerComponentCallbacks(appConfigCallbacks) }
         enableEdgeToEdge()
         val app = application as TaskraApp
         setContent {
@@ -81,7 +172,7 @@ class MainActivity : ComponentActivity() {
             val dark = when (prefs.themeMode) {
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
-                else -> isSystemInDarkTheme()
+                else -> systemDark
             }
             TaskraTheme(darkTheme = dark) {
                 val nav = rememberNavController()
@@ -90,6 +181,10 @@ class MainActivity : ComponentActivity() {
                 val showBottom = route in listOf("todo", "courses", "settings")
                 var showOpening by rememberSaveable { mutableStateOf(!app.openingShown && savedInstanceState == null) }
                 LaunchedEffect(Unit) { app.openingShown = true }
+                LaunchedEffect(showOpening) {
+                    if (!showOpening) app.updater.checkOnStartupIfNeeded()
+                }
+                com.taskra.update.UpdateDialogHost(app.updater)
                 com.taskra.ui.components.ReminderPermissionPrompt(app, prefs.remindersEnabled && !showOpening,
                     todo.any { it.deadlineType != com.taskra.data.DeadlineType.NONE })
                 LaunchedEffect(reminderHomeworkId) {
@@ -105,7 +200,14 @@ class MainActivity : ComponentActivity() {
                     contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     bottomBar = {
                         if (showBottom) {
-                            NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
+                            val navEdge = MaterialTheme.colorScheme.outlineVariant
+                            NavigationBar(
+                                modifier = Modifier.drawBehind {
+                                    drawLine(navEdge, Offset.Zero, Offset(size.width, 0f), 0.8.dp.toPx())
+                                },
+                                containerColor = MaterialTheme.colorScheme.background,
+                                tonalElevation = 0.dp,
+                            ) {
                                 NavigationBarItem(
                                     alwaysShowLabel = false,
                                     selected = route == "todo",
@@ -199,11 +301,13 @@ class MainActivity : ComponentActivity() {
                                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
                             ) { e ->
                                 val id = e.arguments?.getString("id") ?: return@composable
-                                HomeworkDetailScreen(
+                                // 点开待办直接就是可编辑的作业页：右上角保存 / 标记完成。
+                                EditorScreen(
                                     app = app, vm = vm, homeworkId = id,
-                                    onBack = { nav.popBackStack() },
-                                    onEdit = { nav.navigate("editor/edit/$it") },
-                                    onViewImage = { hid, idx -> nav.navigate("viewer/$hid/$idx") },
+                                    presetSemesterId = null, presetCourseId = null,
+                                    onDone = { nav.popBackStack() },
+                                    onCancel = { nav.popBackStack() },
+                                    onViewImage = { imageId -> nav.navigate("viewer/$id/${Uri.encode(imageId)}") },
                                 )
                             }
                             composable(
@@ -259,6 +363,7 @@ class MainActivity : ComponentActivity() {
                                         } else nav.popBackStack()
                                     },
                                     onCancel = { nav.popBackStack() },
+                                    onViewImage = { imageId -> nav.navigate("viewer/$id/${Uri.encode(imageId)}") },
                                 )
                             }
                             composable(
@@ -269,15 +374,15 @@ class MainActivity : ComponentActivity() {
                                 ReviewScreen(app = app, vm = vm, sessionId = id, onBack = { nav.popBackStack() })
                             }
                             composable(
-                                "viewer/{id}/{index}",
+                                "viewer/{id}/{imageId}",
                                 arguments = listOf(
                                     navArgument("id") { type = NavType.StringType },
-                                    navArgument("index") { type = NavType.IntType },
+                                    navArgument("imageId") { type = NavType.StringType },
                                 ),
                             ) { e ->
                                 val id = e.arguments?.getString("id") ?: return@composable
-                                val idx = e.arguments?.getInt("index") ?: 0
-                                ImageViewerScreen(app = app, homeworkId = id, startIndex = idx, onBack = { nav.popBackStack() })
+                                val imageId = e.arguments?.getString("imageId") ?: return@composable
+                                ImageViewerScreen(app = app, homeworkId = id, startImageId = imageId, onBack = { nav.popBackStack() })
                             }
                             composable("trash") {
                                 TrashScreen(

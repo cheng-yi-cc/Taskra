@@ -1,40 +1,30 @@
 package com.taskra.ui.screens
 
-import com.taskra.ui.components.notebookPaper
-
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -43,22 +33,25 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.taskra.TaskraApp
 import com.taskra.data.BackupSummary
-import com.taskra.data.Semester
 import com.taskra.data.ThemeMode
 import com.taskra.ui.AppViewModel
+import com.taskra.ui.components.notebookPaper
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,6 +61,7 @@ fun SettingsScreen(
     onOpenTrash: () -> Unit,
 ) {
     val prefs by vm.prefs.collectAsState()
+    val updateState by app.updater.state.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var backupInfo by remember { mutableStateOf<BackupSummary?>(null) }
@@ -121,6 +115,16 @@ fun SettingsScreen(
                         FilterChip(selected = prefs.themeMode == ThemeMode.LIGHT, onClick = { vm.setTheme(ThemeMode.LIGHT) }, label = { Text("浅色") })
                         FilterChip(selected = prefs.themeMode == ThemeMode.DARK, onClick = { vm.setTheme(ThemeMode.DARK) }, label = { Text("深色") })
                     }
+                    if (prefs.themeMode == ThemeMode.SYSTEM) {
+                        Spacer(Modifier.height(4.dp))
+                        // 让“跟随系统”是否真的生效可见：系统给的颜色是深还是浅。
+                        val systemDark = MaterialTheme.colorScheme.surface.luminance() < .5f
+                        Text(
+                            "系统当前：${if (systemDark) "深色" else "浅色"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             // 自励文字
@@ -165,8 +169,34 @@ fun SettingsScreen(
                     SettingAction(Icons.Outlined.FileDownload, "恢复备份") {
                         importLauncher.launch(arrayOf("application/zip", "*/*"))
                     }
-
-
+                }
+            }
+            // 版本与更新
+            item {
+                SettingCard("版本与更新") {
+                    val avail = updateState.availableUpdate
+                    Text(
+                        if (avail != null) "当前版本：v${updateState.currentVersion}（发现新版本 v${avail.versionName}）"
+                        else "当前版本：v${updateState.currentVersion}",
+                        color = if (avail != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    SettingAction(
+                        Icons.Outlined.SystemUpdateAlt,
+                        when {
+                            updateState.checking -> "正在检查更新…"
+                            avail != null -> "查看新版本（v${avail.versionName}）"
+                            else -> "检查更新"
+                        },
+                    ) {
+                        if (avail != null) {
+                            app.updater.openUpdateDialog()
+                        } else {
+                            app.updater.checkManually { msg ->
+                                scope.launch { snackbar.showSnackbar(msg) }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -210,7 +240,8 @@ private fun SettingCard(title: String, content: @Composable () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(5.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)),
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
         elevation = CardDefaults.cardElevation(0.dp),
     ) {
         Column(Modifier.padding(20.dp)) {
@@ -223,7 +254,10 @@ private fun SettingCard(title: String, content: @Composable () -> Unit) {
 
 @Composable
 private fun SettingAction(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Icon(icon, null, Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.width(14.dp))
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)

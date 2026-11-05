@@ -1,17 +1,21 @@
 package com.taskra.ui.theme
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.unit.dp
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 
 private val LightScheme = lightColorScheme(
     primary = BrandRed,
@@ -83,6 +87,12 @@ private val DarkScheme = darkColorScheme(
     inverseOnSurface = TaskraDark.PageBg,
 )
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 @Composable
 fun TaskraTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -92,8 +102,10 @@ fun TaskraTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val activity = view.context as? android.app.Activity
+            val activity = view.context.findActivity()
             activity?.window?.let { window ->
+                val bg = (if (darkTheme) TaskraDark.PageBg else PageBackground).toArgb()
+                window.decorView.setBackgroundColor(bg)
                 WindowCompat.getInsetsController(window, view).apply {
                     isAppearanceLightStatusBars = !darkTheme
                     isAppearanceLightNavigationBars = !darkTheme

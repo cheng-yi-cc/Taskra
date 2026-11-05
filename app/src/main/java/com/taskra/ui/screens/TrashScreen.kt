@@ -1,12 +1,7 @@
 package com.taskra.ui.screens
 
-import com.taskra.ui.components.notebookPaper
-
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,22 +21,25 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import com.taskra.ui.components.PaperTopBar as TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.taskra.TaskraApp
 import com.taskra.ui.AppViewModel
 import com.taskra.ui.TodoUiItem
 import com.taskra.ui.components.HomeworkCard
+import com.taskra.ui.components.NotebookEmpty
+import com.taskra.ui.components.PaperTopBar as TopAppBar
+import com.taskra.ui.components.notebookPaper
 import com.taskra.util.TimeUtils
 import kotlinx.coroutines.launch
 
@@ -87,53 +85,65 @@ fun TrashScreen(app: TaskraApp, vm: AppViewModel, onBack: () -> Unit, onOpenHome
             }
             if (trash.isEmpty() && trashedCourses.isEmpty()) {
                 item {
-                    Box(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(5.dp))
-                            .background(MaterialTheme.colorScheme.surface).padding(24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) { Text("回收站是空的") }
+                    NotebookEmpty("回收站是空的")
                 }
             } else {
                 items(trashedCourses, key = { "course:${it.id}" }) { course ->
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(5.dp))
-                        .background(MaterialTheme.colorScheme.surface).padding(20.dp)) {
-                        Text(course.name, style = MaterialTheme.typography.titleMedium)
-                        Text("${trash.count { it.courseId == course.id }} 项作业", style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { scope.launch {
-                                try { app.repo.restoreCourse(course.id) }
-                                catch (_: Exception) { snackbar.showSnackbar("恢复失败，请重试") }
-                            } }) { Text("恢复课程") }
-                            OutlinedButton(onClick = { confirmCourseDelete = course.id }) { Text("彻底删除") }
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(5.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Column(Modifier.padding(20.dp)) {
+                            Text(course.name, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "${trash.count { it.courseId == course.id }} 项作业",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    scope.launch {
+                                        try { app.repo.restoreCourse(course.id) }
+                                        catch (_: Exception) { snackbar.showSnackbar("恢复失败，请重试") }
+                                    }
+                                }) { Text("恢复课程") }
+                                OutlinedButton(onClick = { confirmCourseDelete = course.id }) { Text("彻底删除") }
+                            }
                         }
                     }
                 }
                 items(standaloneTrash, key = { it.id }) { h ->
                     val c = h.courseId?.let { courseMap[it] }
-                    Column(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(5.dp))
-                            .background(MaterialTheme.colorScheme.surface).padding(12.dp),
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(5.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
                     ) {
-                        HomeworkCard(
-                            item = TodoUiItem(
-                                h, c?.name, c?.colorIndex ?: 0, false,
-                                TimeUtils.formatDeadline(h.deadlineType, h.deadlineDate, h.deadlineTime, h.deadlineZoneId),
-                                "", 0,
-                            ),
-                            done = h.status == "DONE",
-                            onOpen = { onOpenHomework(h.id) },
-                            onToggleDone = {},
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = {
-                                scope.launch {
-                                    app.repo.restoreFromTrash(h.id)
-                                    snackbar.showSnackbar("已恢复")
-                                }
-                            }) { Text("恢复") }
-                            OutlinedButton(onClick = { confirmDelete = h.id }) { Text("彻底删除") }
+                        Column(Modifier.padding(12.dp)) {
+                            HomeworkCard(
+                                item = TodoUiItem(
+                                    h, c?.name, c?.colorIndex ?: 0, false,
+                                    TimeUtils.formatDeadline(h.deadlineType, h.deadlineDate, h.deadlineTime, h.deadlineZoneId),
+                                    "", 0,
+                                ),
+                                done = h.status == "DONE",
+                                onOpen = { onOpenHomework(h.id) },
+                                onToggleDone = {},
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    scope.launch {
+                                        app.repo.restoreFromTrash(h.id)
+                                        snackbar.showSnackbar("已恢复")
+                                    }
+                                }) { Text("恢复") }
+                                OutlinedButton(onClick = { confirmDelete = h.id }) { Text("彻底删除") }
+                            }
                         }
                     }
                 }
@@ -145,14 +155,16 @@ fun TrashScreen(app: TaskraApp, vm: AppViewModel, onBack: () -> Unit, onOpenHome
         AlertDialog(
             onDismissRequest = { confirmCourseDelete = null },
             title = { Text("彻底删除课程及全部作业？") },
-            confirmButton = { TextButton(onClick = {
-                val id = confirmCourseDelete ?: return@TextButton
-                confirmCourseDelete = null
-                scope.launch {
-                    try { app.repo.deleteCourseForever(id, app.images) }
-                    catch (_: Exception) { snackbar.showSnackbar("删除失败，请重试") }
-                }
-            }) { Text("彻底删除") } },
+            confirmButton = {
+                TextButton(onClick = {
+                    val id = confirmCourseDelete ?: return@TextButton
+                    confirmCourseDelete = null
+                    scope.launch {
+                        try { app.repo.deleteCourseForever(id, app.images) }
+                        catch (_: Exception) { snackbar.showSnackbar("删除失败，请重试") }
+                    }
+                }) { Text("彻底删除") }
+            },
             dismissButton = { TextButton(onClick = { confirmCourseDelete = null }) { Text("取消") } },
         )
     }
@@ -160,7 +172,6 @@ fun TrashScreen(app: TaskraApp, vm: AppViewModel, onBack: () -> Unit, onOpenHome
         AlertDialog(
             onDismissRequest = { confirmDelete = null },
             title = { Text("彻底删除？") },
-
             confirmButton = {
                 TextButton(onClick = {
                     val id = confirmDelete!!
@@ -178,7 +189,6 @@ fun TrashScreen(app: TaskraApp, vm: AppViewModel, onBack: () -> Unit, onOpenHome
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("永久清空回收站？") },
-
             confirmButton = {
                 TextButton(onClick = {
                     confirmClear = false
@@ -187,7 +197,7 @@ fun TrashScreen(app: TaskraApp, vm: AppViewModel, onBack: () -> Unit, onOpenHome
                         standaloneTrash.forEach { app.repo.deleteForever(it.id, app.images) }
                         snackbar.showSnackbar("回收站已清空")
                     }
-                }) { Text("清空") }
+                }) { Text("回收站已清空".let { "清空" }) }
             },
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("取消") } },
         )

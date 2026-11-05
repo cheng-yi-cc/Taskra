@@ -47,6 +47,14 @@ class AppViewModel(private val app: TaskraApp) : ViewModel() {
     val todoAll: StateFlow<List<Homework>> = app.repo.observeTodo()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /**
+     * 作业页“标记完成”后返回待办时要补播的动效：
+     * 待办页切走会丢 remember 状态，所以卡片快照放在 ViewModel 里。
+     */
+    var pendingCheckId: String? = null
+    var lastOpenedItem: TodoUiItem? = null
+    var lastOpenedIndex: Int = 0
+
     // 待办筛选状态
     val query = MutableStateFlow("")
     val filterCourseId = MutableStateFlow<String?>(null) // null=全部，"UNCAT"=未分类
