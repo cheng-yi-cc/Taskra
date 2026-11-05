@@ -2,6 +2,7 @@ package com.taskra.data
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.taskra.sync.SyncJournalSchema
 
 /** v1 → v2：内容块新增富文本标记列（加粗/高亮/标题级别），默认空数组，老数据无损。 */
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -29,5 +30,12 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
 val MIGRATION_4_5 = object : Migration(4, 5) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `courses` ADD COLUMN `templateJson` TEXT")
+    }
+}
+
+/** v5 → v6：添加默认关闭的同步日志，原有作业、设置及附件不作覆盖。 */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        SyncJournalSchema.install(db)
     }
 }

@@ -1,0 +1,17 @@
+[Unit]
+Description=Taskra local-network TLS sync endpoint
+After=network-online.target taskra-sync.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/chengyi/taskra-sync
+UMask=0077
+ExecStartPre=/usr/local/bin/tailscale cert --min-validity 168h --cert-file /home/chengyi/.config/taskra-sync/lan-tls.crt --key-file /home/chengyi/.config/taskra-sync/lan-tls.key chengyi-thinkpad-t420.taild0ff49.ts.net
+ExecStart=/usr/bin/python3 /home/chengyi/taskra-sync/lan_proxy.py --bind 0.0.0.0 --port 38129 --upstream-port 38127 --cert /home/chengyi/.config/taskra-sync/lan-tls.crt --key /home/chengyi/.config/taskra-sync/lan-tls.key
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

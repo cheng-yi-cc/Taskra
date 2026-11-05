@@ -3,9 +3,12 @@ package com.taskra.data
 import android.content.Context
 import android.net.Uri
 import androidx.room.withTransaction
+import com.taskra.sync.SyncGates
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -74,14 +77,16 @@ class BackupManager(
     private val prefs: PrefsRepository,
 ) {
     /**
-     * 导出完整备份：先取一致快照（ suspend 串行读取），再打包。
+     * 导出期间保持数据库快照及附件引用稳定，缺少附件时明确失败。
      * 成功后才由调用方更新 lastBackupTime。
      */
     suspend fun exportTo(uri: Uri): Unit = withContext(Dispatchers.IO) {
+        SyncGates.operation.withLock {
+        val db = repo.db
+        db.withTransaction {
+        SyncGates.assets.withLock {
         val semesters = repo.listSemesters()
         val courses = repo.listCoursesAll()
-        // 一致快照：Room 读取 + 文件复制都在 IO 线程串行完成
-        val db = repo.db
         val homeworkAll = db.homeworkDao().listActive() + db.homeworkDao().listTrash()
         val blocksAll = mutableListOf<ContentBlock>()
         homeworkAll.forEach { h ->
@@ -96,9 +101,13 @@ class BackupManager(
         }
         // 直接从 review_sessions 全表读取（含已结束轮次，保留历史）
         val p = prefs.snapshot()
-        val audioIds = (courses.flatMap { decodeTemplate(it.templateJson)?.blocks.orEmpty() }.mapNotNull { it.audioId } + blocksAll.mapNotNull { it.audioId } + draftsAll.flatMap {
-            (decodeBlocks(it.blocksJson) + decodeBlocks(it.solutionJson)).mapNotNull { block -> block.audioId }
-        }).distinct()
+        fun strictBlocks(raw: String): List<BlockJson> = if (raw.isBlank()) emptyList() else BlockJsonCodec.decodeFromString(raw)
+        val auxiliaryBlocks = courses.flatMap { course ->
+            course.templateJson?.let { BlockJsonCodec.decodeFromString<CourseTemplate>(it).blocks }.orEmpty()
+        } + draftsAll.flatMap { strictBlocks(it.blocksJson) + strictBlocks(it.solutionJson) }
+        val imageIds = blocksAll.mapNotNull { it.imageId } + auxiliaryBlocks.mapNotNull { it.imageId }
+        require(images.map { it.id }.toSet().containsAll(imageIds)) { "图片记录缺失，无法导出完整备份" }
+        val audioIds = (blocksAll.mapNotNull { it.audioId } + auxiliaryBlocks.mapNotNull { it.audioId }).distinct()
         val data = BackupData(semesters, courses, homeworkAll, blocksAll, images, draftsAll, sessionsAll, itemsAll, p, audioIds)
         val dataBytes = BackupJson.encodeToString(data).toByteArray(Charsets.UTF_8)
 
@@ -107,7 +116,8 @@ class BackupManager(
         // 图片校验
         images.forEach { img ->
             val f = File(context.filesDir, img.relativePath)
-            if (f.exists()) hashes["assets/${img.id}.jpg"] = sha256(f)
+            require(img.relativePath == "images/${img.id}.jpg" && f.isFile && f.length() > 0) { "图片文件缺失：${img.id}" }
+            hashes["assets/${img.id}.jpg"] = sha256(f)
         }
         audioIds.forEach { id ->
             val file = audioFile(context, id)
@@ -140,7 +150,6 @@ class BackupManager(
                 zip.closeEntry()
                 images.forEach { img ->
                     val f = File(context.filesDir, img.relativePath)
-                    if (!f.exists()) return@forEach
                     zip.putNextEntry(ZipEntry("assets/${img.id}.jpg"))
                     f.inputStream().use { it.copyTo(zip) }
                     zip.closeEntry()
@@ -152,6 +161,9 @@ class BackupManager(
                 }
             }
         } ?: throw IllegalArgumentException("无法打开导出位置")
+        }
+        }
+        }
     }
 
     /** 读取备份概要（不覆盖数据）。做路径穿越与大小校验。 */
@@ -213,6 +225,7 @@ class BackupManager(
      */
     suspend fun restoreFrom(uri: Uri, confirmed: Boolean, imageStore: ImageStore): Unit =
         withContext(Dispatchers.IO) {
+            SyncGates.operation.withLock {
             require(confirmed) { "恢复需要二次确认" }
             val tmp = File(context.cacheDir, "taskra_restore_${System.currentTimeMillis()}.zip")
             context.contentResolver.openInputStream(uri)?.use { ins ->
@@ -257,6 +270,7 @@ class BackupManager(
                 }
             } finally {
                 try { tmp.delete() } catch (_: Exception) { }
+            }
             }
         }
 

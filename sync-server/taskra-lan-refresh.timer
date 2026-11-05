@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically refresh Taskra LAN TLS certificate
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=30m
+Persistent=true
+Unit=taskra-lan-refresh.service
+
+[Install]
+WantedBy=timers.target

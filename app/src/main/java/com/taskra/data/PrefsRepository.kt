@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -13,6 +14,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.sync.withLock
+import com.taskra.sync.SyncGates
 
 private val Context.prefsStore by preferencesDataStore(name = "taskra_prefs")
 
@@ -44,6 +47,14 @@ class PrefsRepository(private val context: Context) {
     private val K_SORT = stringPreferencesKey("sort_mode")
     private val K_SEMESTER = stringPreferencesKey("current_semester")
     private val K_BACKUP = longPreferencesKey("last_backup_time")
+    private val K_SYNC_CHANGED = longPreferencesKey("sync_settings_changed_at")
+
+    private suspend fun mutate(block: (MutablePreferences) -> Unit) = SyncGates.preferences.withLock {
+        context.prefsStore.edit { p ->
+            block(p)
+            p[K_SYNC_CHANGED] = System.currentTimeMillis()
+        }
+    }
 
     val prefs: Flow<UserPrefs> = context.prefsStore.data.map { p ->
         UserPrefs(
@@ -62,41 +73,41 @@ class PrefsRepository(private val context: Context) {
     }
 
     suspend fun setListOrder(key: String, visibleIds: List<String>) {
-        context.prefsStore.edit { p ->
+        mutate { p ->
             val orders = readOrders(p[K_ORDERS])
             p[K_ORDERS] = Json.encodeToString(orders + (key to com.taskra.util.mergeVisibleOrder(orders[key].orEmpty(), visibleIds)))
             if (key == "todo") p[K_SORT] = SortMode.MANUAL
         }
     }
     suspend fun setMotto(text: String) {
-        context.prefsStore.edit { it[K_MOTTO] = text.take(2000) }
+        mutate { it[K_MOTTO] = text.take(2000) }
     }
     suspend fun setRemindersEnabled(enabled: Boolean) {
-        context.prefsStore.edit { it[K_REMINDERS] = enabled }
+        mutate { it[K_REMINDERS] = enabled }
     }
     suspend fun setReminderMode(mode: String) {
         require(mode in setOf("DAY_TIME", "BEFORE_DEADLINE"))
-        context.prefsStore.edit { it[K_REMINDER_MODE] = mode }
+        mutate { it[K_REMINDER_MODE] = mode }
     }
     suspend fun setReminderHours(hours: Int) {
         require(hours in setOf(1, 6, 12, 24, 48, 72, 168))
-        context.prefsStore.edit { it[K_REMINDER_HOURS] = hours }
+        mutate { it[K_REMINDER_HOURS] = hours }
     }
     suspend fun setReminderTime(minuteOfDay: Int) {
         require(minuteOfDay in 0..1439)
-        context.prefsStore.edit { it[K_REMINDER_TIME] = minuteOfDay }
+        mutate { it[K_REMINDER_TIME] = minuteOfDay }
     }
     suspend fun setMottoVisible(v: Boolean) {
-        context.prefsStore.edit { it[K_MOTTO_VISIBLE] = v }
+        mutate { it[K_MOTTO_VISIBLE] = v }
     }
     suspend fun setTheme(mode: String) {
-        context.prefsStore.edit { it[K_THEME] = mode }
+        mutate { it[K_THEME] = mode }
     }
     suspend fun setSort(mode: String) {
-        context.prefsStore.edit { it[K_SORT] = mode }
+        mutate { it[K_SORT] = mode }
     }
     suspend fun setCurrentSemester(id: String?) {
-        context.prefsStore.edit { e ->
+        mutate { e ->
             if (id == null) e.remove(K_SEMESTER) else e[K_SEMESTER] = id
         }
     }
@@ -122,19 +133,33 @@ class PrefsRepository(private val context: Context) {
         )
     }
 
+    /** 调用方持有 preferences 锁；本机备份时间不参与跨设备同步。 */
+    internal suspend fun syncSnapshot(): Pair<UserPrefs, Long> {
+        val value = snapshot()
+        return value.copy(lastBackupTime = 0L, listOrders = value.listOrders.toSortedMap()) to
+            (context.prefsStore.data.first()[K_SYNC_CHANGED] ?: 0L)
+    }
+
     suspend fun restore(p: UserPrefs) {
-        context.prefsStore.edit {
+        mutate { writeValues(it, p, preserveBackupTime = false) }
+    }
+
+    /** 调用方持有 preferences 锁，恢复远端设置不产生新的本地编辑时间。 */
+    internal suspend fun applySynchronized(p: UserPrefs) {
+        context.prefsStore.edit { writeValues(it, p, preserveBackupTime = true) }
+    }
+
+    private fun writeValues(it: MutablePreferences, p: UserPrefs, preserveBackupTime: Boolean) {
             it[K_MOTTO] = p.mottoText
             it[K_MOTTO_VISIBLE] = p.mottoVisible
             it[K_THEME] = p.themeMode
             it[K_SORT] = p.sortMode
             if (p.currentSemesterId == null) it.remove(K_SEMESTER) else it[K_SEMESTER] = p.currentSemesterId
-            it[K_BACKUP] = p.lastBackupTime
+            if (!preserveBackupTime) it[K_BACKUP] = p.lastBackupTime
             it[K_ORDERS] = Json.encodeToString(p.listOrders)
             it[K_REMINDERS] = p.remindersEnabled
             it[K_REMINDER_TIME] = p.reminderMinuteOfDay.coerceIn(0, 1439)
             it[K_REMINDER_MODE] = if (p.reminderMode == "BEFORE_DEADLINE") p.reminderMode else "DAY_TIME"
             it[K_REMINDER_HOURS] = p.reminderHours.coerceIn(1, 168)
-        }
     }
 }

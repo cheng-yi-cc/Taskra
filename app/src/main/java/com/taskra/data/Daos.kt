@@ -138,6 +138,10 @@ interface DraftDao {
 
 @Dao
 interface ReviewDao {
+    @Query("DELETE FROM review_items WHERE sessionId=:id")
+    suspend fun deleteItemsBySession(id: String)
+    @Query("DELETE FROM review_sessions WHERE id=:id")
+    suspend fun deleteSession(id: String)
     @Query("DELETE FROM review_sessions WHERE courseId=:courseId")
     suspend fun deleteByCourse(courseId: String)
 

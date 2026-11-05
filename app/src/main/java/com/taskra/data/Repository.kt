@@ -1,11 +1,14 @@
 package com.taskra.data
 
 import androidx.room.withTransaction
+import com.taskra.sync.SyncGates
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 @Serializable
@@ -227,11 +230,20 @@ class TaskraRepository(val db: AppDatabase, private val filesDir: java.io.File? 
     private suspend fun deleteUnusedAudio(ids: List<String>) {
         val directory = filesDir ?: return
         if (ids.isEmpty()) return
-        val referenced = blocks.allReferencedAudioIds().toSet() + templateBlocks().mapNotNull { it.audioId } + drafts.listAll().flatMap {
-            (decodeBlocks(it.blocksJson) + decodeBlocks(it.solutionJson)).mapNotNull { block -> block.audioId }
-        }
-        ids.filter { it !in referenced && Regex("[a-zA-Z0-9_-]+").matches(it) }.forEach {
-            runCatching { java.io.File(directory, "audio/$it.m4a").delete() }
+        db.withTransaction {
+            SyncGates.assets.withLock {
+                fun strictBlocks(raw: String): List<BlockJson> = if (raw.isBlank()) emptyList() else BlockJsonCodec.decodeFromString(raw)
+                val templateAudio = courses.listAll().flatMap {
+                    it.templateJson?.let { raw -> BlockJsonCodec.decodeFromString<CourseTemplate>(raw).blocks }.orEmpty()
+                }.mapNotNull { it.audioId }
+                val referenced = blocks.allReferencedAudioIds().toSet() + templateAudio + drafts.listAll().flatMap {
+                    (strictBlocks(it.blocksJson) + strictBlocks(it.solutionJson)).mapNotNull { block -> block.audioId }
+                }
+                ids.distinct().filter { it !in referenced && Regex("[a-zA-Z0-9_-]+").matches(it) }.forEach {
+                    val file = java.io.File(directory, "audio/$it.m4a")
+                    check(!file.exists() || file.delete()) { "无法删除未使用的录音" }
+                }
+            }
         }
     }
 

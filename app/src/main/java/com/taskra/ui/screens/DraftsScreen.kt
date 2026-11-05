@@ -56,7 +56,7 @@ import java.util.Locale
 fun DraftsScreen(
     app: TaskraApp,
     onBack: () -> Unit,
-    onContinueNew: () -> Unit,
+    onContinueNew: (String) -> Unit,
     onContinueEdit: (String) -> Unit,
 ) {
     val drafts by app.repo.observeDrafts().collectAsState(initial = emptyList())
@@ -98,7 +98,7 @@ fun DraftsScreen(
                         onDelete = { vm.deleteDraft(d.id) { swipeReset++; deleteFailed = true } },
                     ) { Card(
                         modifier = Modifier.fillMaxWidth().testTag("continue_draft:${d.id}").clickable {
-                            if (d.homeworkId == null) onContinueNew() else onContinueEdit(d.homeworkId)
+                            if (d.homeworkId == null) onContinueNew(d.id) else onContinueEdit(d.homeworkId)
                         },
                         shape = RoundedCornerShape(5.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),

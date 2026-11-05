@@ -43,7 +43,7 @@ class InteractionRegressionTest {
         awaitEditorGone()
         rule.onNodeWithText("草稿箱").assertIsDisplayed()
         rule.onNodeWithText("编辑草稿").assertIsDisplayed()
-        rule.onNodeWithText("继续编辑").performClick()
+        rule.onNodeWithTag("continue_draft:edit:$id").performClick()
         awaitTag("publish_homework")
         rule.onNodeWithTag("publish_homework").performClick()
         awaitEditorGone()

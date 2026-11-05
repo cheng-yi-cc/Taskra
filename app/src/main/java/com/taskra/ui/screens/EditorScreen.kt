@@ -136,9 +136,12 @@ import com.taskra.util.rememberHighlightColor
 import com.taskra.util.sliceSpans
 import com.taskra.util.toggleMark
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
+import com.taskra.sync.SyncGates
 import java.io.File
 import java.time.ZoneId
 import java.util.UUID
@@ -155,14 +158,26 @@ fun EditorScreen(
     onDone: (hasDrafts: Boolean) -> Unit,
     onCancel: () -> Unit,
     templateCourseId: String? = null,
+    draftIdOverride: String? = null,
 ) {
+    var editorLockHeld by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        SyncGates.editor.withLock {
+            editorLockHeld = true
+            try { awaitCancellation() } finally { editorLockHeld = false }
+        }
+    }
+    if (!editorLockHeld) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("正在同步…") }
+        return
+    }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val semesters by vm.semesters.collectAsState()
     val coursesAll by vm.coursesAll.collectAsState()
     val prefs by vm.prefs.collectAsState()
 
-    val draftId = if (templateCourseId != null) "template:$templateCourseId" else if (homeworkId == null) "new" else "edit:$homeworkId"
+    val draftId = if (templateCourseId != null) "template:$templateCourseId" else if (homeworkId == null) draftIdOverride ?: "new" else "edit:$homeworkId"
     var loaded by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf("") }
     var semesterId by remember { mutableStateOf(presetSemesterId) }
@@ -398,7 +413,7 @@ fun EditorScreen(
                 }.ifEmpty { listOf(BlockJson(UUID.randomUUID().toString(), BlockKind.TEXT, "")) }
             }
         } else {
-            val draft = app.repo.getDraft("new")
+            val draft = app.repo.getDraft(draftId)
             if (draft != null) {
                 title = draft.title
                 semesterId = draft.semesterId ?: presetSemesterId
@@ -415,7 +430,7 @@ fun EditorScreen(
             }
         }
         question = editableDocument(question)
-        savedSnapshot = if (templateCourseId == null && homeworkId == null && app.repo.getDraft("new") == null && question.any { it.kind != BlockKind.TEXT || it.text.isNotBlank() }) null else draftSnapshot()
+        savedSnapshot = if (templateCourseId == null && homeworkId == null && app.repo.getDraft(draftId) == null && question.any { it.kind != BlockKind.TEXT || it.text.isNotBlank() }) null else draftSnapshot()
         loaded = true
     }
 
@@ -673,7 +688,7 @@ fun EditorScreen(
                     )
                 }
                 app.repo.createHomework(semId, cId, finalTitle, deadlineType, deadlineDate, deadlineTime, deadlineZone, q, emptyList())
-                app.repo.deleteDraft("new")
+                app.repo.deleteDraft(draftId)
             } else {
                 val old = app.repo.getHomework(homeworkId) ?: error("作业不存在")
                 val q = cleaned.mapIndexed { i, b ->

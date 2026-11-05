@@ -1,0 +1,15 @@
+[Unit]
+Description=Taskra private sync service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/chengyi/taskra-sync
+ExecStart=/usr/bin/python3 /home/chengyi/taskra-sync/main.py --data-dir /home/chengyi/taskra-sync/data serve --port 38127 --mount /taskra-sync
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

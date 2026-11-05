@@ -141,6 +141,11 @@ fun SettingsScreen(
                 }
             }
             item {
+                SettingCard("多端同步") {
+                    com.taskra.ui.components.SyncSettings(app)
+                }
+            }
+            item {
                 SettingCard("回收站") {
                     SettingAction(Icons.Outlined.DeleteOutline, "回收站", onOpenTrash)
                 }

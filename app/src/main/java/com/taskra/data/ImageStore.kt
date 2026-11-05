@@ -4,8 +4,12 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
+import androidx.room.withTransaction
+import com.taskra.sync.SyncGates
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.decodeFromString
 import java.io.File
 import java.util.UUID
 
@@ -17,7 +21,8 @@ data class ImportedImage(val assetId: String, val width: Int, val height: Int, v
  * - 先写 tmp/ 再校验解码，最后提交正式引用
  * - 数据库只存 ID + 相对路径 + 元数据
  */
-class ImageStore(private val context: Context, private val imageDao: ImageAssetDao) {
+class ImageStore(private val context: Context, private val db: AppDatabase) {
+    private val imageDao get() = db.imageDao()
 
     fun imagesDir(): File = File(context.filesDir, "images").apply { mkdirs() }
     fun tmpDir(): File = File(context.filesDir, "tmp").apply { mkdirs() }
@@ -98,9 +103,20 @@ class ImageStore(private val context: Context, private val imageDao: ImageAssetD
     }
 
     suspend fun deleteAssets(ids: Collection<String>) = withContext(Dispatchers.IO) {
-        ids.forEach { id ->
-            try { fileForId(id).delete() } catch (_: Exception) { }
-            try { imageDao.delete(id) } catch (_: Exception) { }
+        db.withTransaction {
+            SyncGates.assets.withLock {
+                fun strictBlocks(raw: String): List<BlockJson> = if (raw.isBlank()) emptyList() else BlockJsonCodec.decodeFromString(raw)
+                val drafts = db.draftDao().listAll().flatMap { strictBlocks(it.blocksJson) + strictBlocks(it.solutionJson) }
+                val templates = db.courseDao().listAll().flatMap {
+                    it.templateJson?.let { raw -> BlockJsonCodec.decodeFromString<CourseTemplate>(raw).blocks }.orEmpty()
+                }
+                val referenced = db.blockDao().allReferencedImageIds().toSet() + drafts.mapNotNull { it.imageId } + templates.mapNotNull { it.imageId }
+                ids.distinct().filter { it !in referenced && Regex("[A-Za-z0-9_-]+").matches(it) }.forEach { id ->
+                    val file = fileForId(id)
+                    check(!file.exists() || file.delete()) { "无法删除未使用的图片" }
+                    imageDao.delete(id)
+                }
+            }
         }
     }
 }

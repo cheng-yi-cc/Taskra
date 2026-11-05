@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh Taskra LAN TLS certificate
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user try-restart taskra-lan.service

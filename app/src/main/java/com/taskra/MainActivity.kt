@@ -232,6 +232,19 @@ class MainActivity : ComponentActivity() {
                                     templateCourseId = entry.arguments?.getString("id"),
                                     onDone = { nav.popBackStack() }, onCancel = { nav.popBackStack() })
                             }
+                            composable("editor/draft/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+                                val draftId = entry.arguments?.getString("id") ?: return@composable
+                                EditorScreen(
+                                    app = app, vm = vm, homeworkId = null, presetSemesterId = null,
+                                    presetCourseId = null, draftIdOverride = draftId,
+                                    onDone = { hasDrafts ->
+                                        if (nav.previousBackStackEntry?.destination?.route == "drafts" && !hasDrafts) {
+                                            nav.popBackStack("todo", false)
+                                        } else nav.popBackStack()
+                                    },
+                                    onCancel = { nav.popBackStack() },
+                                )
+                            }
                             composable(
                                 "editor/edit/{id}",
                                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
@@ -277,7 +290,7 @@ class MainActivity : ComponentActivity() {
                                 DraftsScreen(
                                     app = app,
                                     onBack = { nav.popBackStack() },
-                                    onContinueNew = { nav.navigate("editor/new") },
+                                    onContinueNew = { nav.navigate("editor/draft/${Uri.encode(it)}") },
                                     onContinueEdit = { nav.navigate("editor/edit/$it") },
                                 )
                             }

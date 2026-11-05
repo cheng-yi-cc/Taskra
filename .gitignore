@@ -28,3 +28,9 @@ node_modules/
 
 # OS
 Thumbs.db
+
+# Python 缓存和本地同步服务数据
+__pycache__/
+*.pyc
+sync-server/data/
+sync-server/test-tls/

@@ -20,6 +20,20 @@ import java.util.zip.ZipFile
 
 @RunWith(AndroidJUnit4::class)
 class AudioStorageTest {
+    @Test fun backupRefusesMissingImageInsteadOfCreatingAnIncompleteArchive() = runBlocking {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as TaskraApp
+        val root = File(app.cacheDir, "missing-image-test-${UUID.randomUUID()}").apply { mkdirs() }
+        val context = object : ContextWrapper(app) {
+            override fun getFilesDir(): File = File(root, "files").apply { mkdirs() }
+        }
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        try {
+            db.imageDao().upsert(ImageAsset("missing", "images/missing.jpg", 1, 1, 1))
+            val manager = BackupManager(context, TaskraRepository(db, context.filesDir), app.prefs)
+            assertTrue(runCatching { manager.exportTo(Uri.fromFile(File(root, "backup.zip"))) }.isFailure)
+        } finally { db.close(); root.deleteRecursively() }
+    }
+
     @Test fun migration_preservesExistingTextAndFormatting() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val helper = FrameworkSQLiteOpenHelperFactory().create(SupportSQLiteOpenHelper.Configuration.builder(context)
@@ -65,10 +79,10 @@ class AudioStorageTest {
             ZipFile(backup).use { assertNotNull(it.getEntry("audio/sample.m4a")) }
             assertEquals(1, manager.inspectBackup(Uri.fromFile(backup)).audioCount)
             audio.writeBytes(byteArrayOf(9))
-            manager.restoreFrom(Uri.fromFile(backup), true, ImageStore(context, db.imageDao()))
+            manager.restoreFrom(Uri.fromFile(backup), true, ImageStore(context, db))
             assertArrayEquals(byteArrayOf(1, 2, 3, 4), audio.readBytes())
             assertEquals(2500L, repo.detail(id)!!.question.single().audioDurationMs)
-            repo.deleteForever(id, ImageStore(context, db.imageDao()))
+            repo.deleteForever(id, ImageStore(context, db))
             assertTrue("草稿仍引用录音", audio.exists())
             repo.deleteDraft("new")
             assertFalse(audio.exists())
