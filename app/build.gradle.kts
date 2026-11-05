@@ -29,6 +29,23 @@ val hasReleaseSigning = !ksFile.isNullOrBlank()
     && !ksKeyAlias.isNullOrBlank()
     && !ksKeyPassword.isNullOrBlank()
 
+val rawVersionTag = System.getenv("TASKRA_VERSION")?.trim()?.ifBlank { null }
+    ?: System.getenv("TAG")?.trim()?.ifBlank { null }
+val resolvedVersionName = rawVersionTag
+    ?.removePrefix("v")
+    ?.removePrefix("V")
+    ?.ifBlank { null }
+    ?: "1.0.2"
+val semverMatch = Regex("""^(\d+)\.(\d+)\.(\d+)""").find(resolvedVersionName)?.groupValues
+val resolvedVersionCode = if (semverMatch != null) {
+    val major = semverMatch[1].toIntOrNull() ?: 1
+    val minor = semverMatch[2].toIntOrNull() ?: 0
+    val patch = semverMatch[3].toIntOrNull() ?: 0
+    ((major - 1).coerceAtLeast(0) * 10000 + minor * 100 + patch + 1).coerceAtLeast(1)
+} else {
+    3
+}
+
 android {
     namespace = "com.taskra"
     compileSdk = 35
@@ -37,8 +54,8 @@ android {
         applicationId = "com.taskra"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = resolvedVersionCode
+        versionName = resolvedVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

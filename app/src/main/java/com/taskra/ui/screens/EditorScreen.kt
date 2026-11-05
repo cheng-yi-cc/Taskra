@@ -114,6 +114,7 @@ import com.taskra.data.Course
 import com.taskra.data.DeadlineType
 import com.taskra.data.EditorDraft
 import com.taskra.data.Semester
+import com.taskra.data.Status
 import com.taskra.data.decodeBlocks
 import com.taskra.data.encodeBlocks
 import com.taskra.ui.AppViewModel
@@ -155,6 +156,8 @@ fun EditorScreen(
     onDone: (hasDrafts: Boolean) -> Unit,
     onCancel: () -> Unit,
     templateCourseId: String? = null,
+    /** 已有作业：点图片看大图。新建作业没有库内 id，因此不提供。 */
+    onViewImage: ((String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -178,6 +181,8 @@ fun EditorScreen(
     var showNewCourse by remember { mutableStateOf(false) }
     var newCourseName by remember { mutableStateOf("") }
     var showDeadline by remember { mutableStateOf(false) }
+    var showTrashConfirm by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf(Status.TODO) }
     var saveRevision by remember { mutableStateOf(0) }
     var publishing by remember { mutableStateOf(false) }
     var submitted by remember { mutableStateOf(false) }
@@ -227,10 +232,21 @@ fun EditorScreen(
         if (!imeShown) formatMode = false
     }
 
-    /** 学期兜底：预设 → 当前偏好 → 未归档 → 任意 → 自动新建。创建课程无响应的根因就是这里曾返回空。 */
+    /**
+     * 学期兜底：预设 → 当前偏好 → 未归档 → 任意 → 自动新建。
+     * 草稿和备份可能引用已被删除的学期，必须先校验存在，否则插入作业会 FOREIGN KEY 失败。
+     */
     suspend fun ensureSemesterId(): String? {
-        semesterId?.let { return it }
-        prefs.currentSemesterId?.let { semesterId = it; return it }
+        semesterId?.let { id ->
+            if (app.repo.getSemester(id) != null) return id
+            semesterId = null
+        }
+        prefs.currentSemesterId?.let { id ->
+            if (app.repo.getSemester(id) != null) {
+                semesterId = id
+                return id
+            }
+        }
         val first = semesters.firstOrNull { !it.isArchived } ?: semesters.firstOrNull()
         if (first != null) {
             semesterId = first.id
@@ -244,6 +260,17 @@ fun EditorScreen(
             id
         } catch (_: Exception) {
             null
+        }
+    }
+
+    LaunchedEffect(highlight) {
+        if (!loaded) return@LaunchedEffect
+        question.filter { it.kind == BlockKind.TEXT }.forEach { block ->
+            if (fieldValues.containsKey(block.id)) {
+                fieldValues[block.id] = (fieldValues[block.id] ?: TextFieldValue()).copy(
+                    annotatedString = annotatedForEditing(block.text, block.spans, highlight, baseSize)
+                )
+            }
         }
     }
 
@@ -397,6 +424,7 @@ fun EditorScreen(
                     BlockJson(it.id, it.kind, it.text ?: "", it.imageId, decodeSpans(it.spanJson), it.audioId, it.audioDurationMs)
                 }.ifEmpty { listOf(BlockJson(UUID.randomUUID().toString(), BlockKind.TEXT, "")) }
             }
+            status = d?.homework?.status ?: Status.TODO
         } else {
             val draft = app.repo.getDraft("new")
             if (draft != null) {
@@ -627,7 +655,7 @@ fun EditorScreen(
         if (imeShown) pendingFocusId = activeId
     }
 
-    suspend fun doSave() {
+    suspend fun doSave(markCompleted: Boolean = false) {
         if (templateCourseId != null) {
             val template = CourseTemplate(question.filter { it.kind != BlockKind.TEXT || it.text.isNotBlank() }, deadlineDate?.toIntOrNull(), deadlineTime)
             app.repo.db.withTransaction {
@@ -648,8 +676,11 @@ fun EditorScreen(
             snackbar.showSnackbar("请添加作业内容")
             return
         }
-        val semId = courseId?.let { app.repo.getCourse(it)?.semesterId } ?: ensureSemesterId()
-        if (semId == null) {
+        // 课程归属的学期同样要校验：课程可能已随学期一起被删。
+        val semId = courseId?.let { app.repo.getCourse(it)?.semesterId }
+            ?.takeIf { app.repo.getSemester(it) != null }
+            ?: ensureSemesterId()
+        if (semId == null || app.repo.getSemester(semId) == null) {
             snackbar.showSnackbar("课程准备失败，请重试")
             return
         }
@@ -695,11 +726,36 @@ fun EditorScreen(
         }
         submitted = true
         savedSnapshot = draftSnapshot()
+        // 标记完成：先落库状态再带信号返回，返回待办页补播“画钩后消散”的动效。
+        if (markCompleted && homeworkId != null) {
+            app.repo.markDone(homeworkId)
+            status = Status.DONE
+            vm.pendingCheckId = homeworkId
+        }
         val hasDrafts = app.repo.db.draftDao().listAll().any { !it.id.startsWith("template:") }
         postOnMain { onDone(hasDrafts) }
     }
 
+    /** 保存 / 保存并完成：先取消待触发的自动草稿，再正式写入。 */
+    fun runPublish(markCompleted: Boolean) {
+        if (publishing || submitted || !loaded) return
+        publishing = true
+        scope.launch {
+            try {
+                saveJob?.cancelAndJoin()
+                doSave(markCompleted)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                // 只有 Snackbar 时排查不到根因，保留一条日志。
+                android.util.Log.e("TaskraEditor", "作业保存失败", e)
+                snackbar.showSnackbar("作业保存失败，请重试")
+            }
+            finally { publishing = false }
+        }
+    }
+
     val semCourses = coursesAll
+    val existingId = homeworkId
     val courseName = remember(courseId, coursesAll) {
         coursesAll.find { it.id == courseId }?.name ?: "未分类"
     }
@@ -721,24 +777,44 @@ fun EditorScreen(
                 },
                 actions = {
                     DraftFeedback(saveState, saveRevision)
+                    if (existingId != null) {
+                        IconButton(
+                            onClick = {
+                                if (status == Status.DONE) {
+                                    scope.launch {
+                                        try {
+                                            app.repo.markTodo(existingId)
+                                            status = Status.TODO
+                                            snackbar.showSnackbar("已恢复为未完成")
+                                        } catch (_: Exception) {
+                                            snackbar.showSnackbar("恢复失败，请重试")
+                                        }
+                                    }
+                                } else runPublish(markCompleted = true)
+                            },
+                            enabled = loaded && !publishing && !leaving && importing == 0,
+                            modifier = Modifier.testTag("homework_done_toggle"),
+                        ) {
+                            Icon(
+                                if (status == Status.DONE) Icons.Outlined.Undo else Icons.Outlined.CheckCircle,
+                                contentDescription = if (status == Status.DONE) "恢复为未完成" else "标记完成",
+                            )
+                        }
+                        IconButton(
+                            onClick = { showTrashConfirm = true },
+                            enabled = loaded && !publishing && !leaving && importing == 0,
+                            modifier = Modifier.testTag("homework_trash"),
+                        ) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "移入回收站")
+                        }
+                    }
                     FilledIconButton(
-                        onClick = {
-                            if (publishing || submitted) return@FilledIconButton
-                            publishing = true
-                            scope.launch {
-                                try {
-                                    saveJob?.cancelAndJoin()
-                                    doSave()
-                                } catch (e: CancellationException) { throw e }
-                                catch (_: Exception) { snackbar.showSnackbar("作业保存失败，请重试") }
-                                finally { publishing = false }
-                            }
-                        },
+                        onClick = { runPublish(markCompleted = false) },
                         enabled = loaded && !publishing && !leaving && importing == 0,
                         modifier = Modifier.padding(end = 12.dp).testTag("publish_homework"),
                     ) {
                         if (publishing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Outlined.Check, contentDescription = "确定")
+                        else Icon(Icons.Outlined.Save, contentDescription = "保存")
                     }
                 },
             )
@@ -856,10 +932,17 @@ fun EditorScreen(
                     val imgId = block.imageId
                     if (imgId != null) {
                         Box(modifier = Modifier.fillMaxWidth()) {
+                            val viewImage = onViewImage
                             AsyncImage(
                                 model = File(app.filesDir, "images/$imgId.jpg"),
                                 contentDescription = "作业图片",
-                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .then(
+                                        if (viewImage != null) Modifier.clickable { viewImage(imgId) }
+                                        else Modifier
+                                    ),
                                 contentScale = ContentScale.FillWidth,
                             )
                             IconButton(
@@ -947,6 +1030,26 @@ fun EditorScreen(
                 }) { Text("创建并选用") }
             },
             dismissButton = { TextButton(onClick = { showNewCourse = false }) { Text("取消") } },
+        )
+    }
+    if (showTrashConfirm && existingId != null) {
+        AlertDialog(
+            onDismissRequest = { showTrashConfirm = false },
+            title = { Text("移入回收站？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showTrashConfirm = false
+                    scope.launch {
+                        try {
+                            app.repo.moveToTrash(existingId)
+                            postOnMain { onCancel() }
+                        } catch (_: Exception) {
+                            snackbar.showSnackbar("删除失败，请重试")
+                        }
+                    }
+                }) { Text("移入回收站") }
+            },
+            dismissButton = { TextButton(onClick = { showTrashConfirm = false }) { Text("取消") } },
         )
     }
 }

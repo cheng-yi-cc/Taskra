@@ -13,6 +13,7 @@ import com.taskra.data.PrefsRepository
 import com.taskra.data.TaskraRepository
 import com.taskra.util.SystemClock
 import com.taskra.reminders.HomeworkReminders
+import com.taskra.update.AppUpdater
 
 class TaskraApp : Application() {
     var openingShown = false
@@ -28,6 +29,8 @@ class TaskraApp : Application() {
         private set
     lateinit var reminders: HomeworkReminders
         private set
+    lateinit var updater: AppUpdater
+        private set
 
     val clock = SystemClock
 
@@ -42,5 +45,6 @@ class TaskraApp : Application() {
         backup = BackupManager(this, repo, prefs)
         reminders = HomeworkReminders(this)
         reminders.start()
+        updater = AppUpdater(this)
     }
 }

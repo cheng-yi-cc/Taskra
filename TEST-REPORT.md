@@ -1,3 +1,16 @@
+# v1.0.2 应用内检查更新与体验优化验证（2026-11-05）
+
+- 版本号与构建流水线升级：`app/build.gradle.kts` 支持从 `TASKRA_VERSION` / `TAG` 自动推导 `versionName` 与递增 `versionCode`（默认 `versionName = "1.0.2"`、`versionCode = 3`），`.github/workflows/release.yml` 在打 tag 发版时自动注入版本。
+- 应用内检查更新（`AppUpdater`）：实现启动静默检查 + 设置页「版本与更新」手动检查，直连 GitHub Releases Latest API，流式下载 APK 并边下边算 SHA-256 校验值与 APK 归档完整性，通过 `FileProvider` 调起系统安装器（含未知来源权限授权返回自动续装、「忽略此版本」防打扰及浏览器兜底）。
+- 交互与主题体验优化：点开已有作业直接进入原地可编辑页（移除只读详情页）；待办完成升级为“方框画对钩（320ms）+ 整卡纸片消散（620ms）”两段式动效（支持从作业编辑页完成返回时快照补播）；新增多源系统深浅色检测（`Settings.Secure("ui_night_mode")` + `UiModeManager` + `Configuration.uiMode` + `ContentObserver`），解决澎湃 OS / MIUI 控制中心切换深色不即时生效问题。
+- `:app:testDebugUnitTest` 共 42 项 JVM 单元测试（新增 `AppUpdaterTest` 3 项，覆盖语义化版本比对、预发布过滤、GitHub Release JSON 与 SHA-256 解析）及 `:app:assembleDebug` 全部通过。
+
+# v1.0.1 发布与方格纸官网更新验证（2026-11-03）
+
+- 版本号升级：`app/build.gradle.kts` 更新为 `versionCode = 2`、`versionName = "1.0.1"`，`:app:testDebugUnitTest` 39 项单元测试全部通过。
+- GitHub Releases 发布验证：`v1.0.1` 正式签名版已由 GitHub Actions 构建并发布，包含 `taskra-v1.0.1.apk`、`taskra-latest.apk`（大小 14,753,530 字节，SHA-256 `d8012c67a2c005808393ae881beea961d520ca9f286bfbc20bb483a14a31470a`）与 `taskra-v1.0.1.apk.sha256`。
+- 官网与下载链路验证：修复 Cloudflare Pages 在 tag 游离 HEAD 下落入预览分支的问题（显式指定 `--branch=main`）；生产域名 `https://taskra.chengyi.me/version.json`、`taskra-v1.0.1.apk`、`taskra-latest.apk` 实测返回 HTTP 200 且 SHA-256 与 GitHub Release 完全一致。
+
 # 截止提醒与升级验证（2026-11-02）
 
 - 构建与 JVM 单元测试通过，共 39 项；提醒计划覆盖日期和具体时刻、两种提醒方式、补发边界及旧备份兼容。

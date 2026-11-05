@@ -43,7 +43,8 @@ class InteractionRegressionTest {
         awaitEditorGone()
         rule.onNodeWithText("草稿箱").assertIsDisplayed()
         rule.onNodeWithText("编辑草稿").assertIsDisplayed()
-        rule.onNodeWithText("继续编辑").performClick()
+        // 草稿卡片本身就是“继续编辑”的入口（089b252 起没有单独的按钮文案）。
+        rule.onNodeWithTag("continue_draft:edit:$id").performClick()
         awaitTag("publish_homework")
         rule.onNodeWithTag("publish_homework").performClick()
         awaitEditorGone()

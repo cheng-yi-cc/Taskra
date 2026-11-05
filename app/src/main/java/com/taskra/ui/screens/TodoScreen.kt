@@ -1,30 +1,6 @@
 package com.taskra.ui.screens
 
-import com.taskra.ui.components.notebookPaper
-
-import androidx.compose.foundation.lazy.rememberLazyListState
-import com.taskra.ui.components.rememberDragOrder
-import com.taskra.ui.components.reorderItemModifier
-import com.taskra.util.ordered
-
-
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.ImeAction
-import com.taskra.ui.components.SwipeToTrash
-import com.taskra.ui.components.TileDismiss
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.Drafts
-import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Badge
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,45 +15,56 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Drafts
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,10 +76,21 @@ import com.taskra.data.Status
 import com.taskra.ui.AppViewModel
 import com.taskra.ui.TodoUiItem
 import com.taskra.ui.components.HomeworkCard
+import com.taskra.ui.components.NotebookEmpty
+import com.taskra.ui.components.SwipeToTrash
+import com.taskra.ui.components.TileDismiss
+import com.taskra.ui.components.notebookPaper
+import com.taskra.ui.components.rememberDragOrder
+import com.taskra.ui.components.reorderItemModifier
 import com.taskra.ui.filterTodo
 import com.taskra.util.HomeworkSort
 import com.taskra.util.TimeUtils
+import com.taskra.util.ordered
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/** 对钩描完再消散：钩 320ms，留一点余量。 */
+private const val CHECK_TICK_MS = 340L
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -191,6 +189,8 @@ fun TodoScreen(
     var draftDue by remember { mutableStateOf("ALL") }
     var draftSort by remember { mutableStateOf(prefs.sortMode) }
     var swipeReset by remember { mutableStateOf(0) }
+    // 完成动效分两段：checking 正在画对钩，outgoing 正在纸片消散。
+    val checking = remember { mutableStateMapOf<String, Pair<TodoUiItem, Int>>() }
     val outgoing = remember { mutableStateMapOf<String, Pair<TodoUiItem, Int>>() }
     val animationFinished = remember { mutableStateMapOf<String, Boolean>() }
     LaunchedEffect(todoAll, animationFinished.toMap()) {
@@ -201,8 +201,43 @@ fun TodoScreen(
             }
         }
     }
-    val visibleItems = todoItems.filterNot { outgoing.containsKey(it.h.id) }.toMutableList().apply {
-        outgoing.values.sortedBy { it.second }.forEach { (item, index) -> add(index.coerceIn(0, size), item) }
+    val visibleItems = todoItems
+        .filterNot { checking.containsKey(it.h.id) || outgoing.containsKey(it.h.id) }
+        .toMutableList()
+        .apply {
+            (checking.values + outgoing.values).sortedBy { it.second }
+                .forEach { (item, index) -> add(index.coerceIn(0, size), item) }
+        }
+
+    /** 完成动效：先画对钩，再整张卡片消散。persist=false 用于“从作业页标记完成后返回”。 */
+    fun playCompletion(item: TodoUiItem, index: Int, persist: Boolean) {
+        val id = item.h.id
+        if (checking.containsKey(id) || outgoing.containsKey(id)) return
+        checking[id] = item to index
+        if (persist) {
+            vm.complete(id) {
+                checking.remove(id)
+                scope.launch { snackbar.showSnackbar("未能保存完成状态，请重试") }
+            }
+        }
+        scope.launch {
+            delay(CHECK_TICK_MS)
+            val entry = checking.remove(id) ?: return@launch
+            outgoing[id] = entry
+        }
+    }
+
+    // 在作业页点了“完成”并返回：用离开前的卡片快照补播同一段动效。
+    LaunchedEffect(Unit) {
+        val pending = vm.pendingCheckId ?: return@LaunchedEffect
+        val snapshot = vm.lastOpenedItem?.takeIf { it.h.id == pending }
+        val index = vm.lastOpenedIndex
+        vm.pendingCheckId = null
+        vm.lastOpenedItem = null
+        if (snapshot != null) {
+            delay(90)
+            playCompletion(snapshot, index, persist = false)
+        }
     }
 
     val listState = rememberLazyListState()
@@ -269,27 +304,14 @@ fun TodoScreen(
             // 作业列表
             if (visibleItems.isEmpty()) {
                 item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(5.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            if (filtering) "暂无结果"
-                            else "暂无待办",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    NotebookEmpty(if (filtering) "暂无结果" else "暂无待办")
                 }
             } else {
                 items(displayedItems, key = { it.h.id }) { item ->
                     SwipeToTrash(
-                        resetKey = swipeReset, enabled = !outgoing.containsKey(item.h.id) && drag.dragging == null,
-                        modifier = reorderItemModifier(drag, item.h.id, outgoing.isEmpty()).testTag("swipe_homework:${item.h.id}"),
+                        resetKey = swipeReset,
+                        enabled = !outgoing.containsKey(item.h.id) && !checking.containsKey(item.h.id) && drag.dragging == null,
+                        modifier = reorderItemModifier(drag, item.h.id, outgoing.isEmpty() && checking.isEmpty()).testTag("swipe_homework:${item.h.id}"),
                         onDelete = { vm.trashHomework(item.h.id) { swipeReset++; scope.launch { snackbar.showSnackbar("删除失败，请重试") } } },
                     ) {
                     TileDismiss(
@@ -298,17 +320,15 @@ fun TodoScreen(
                     ) {
                         HomeworkCard(
                             item = item,
-                            onOpen = { if (!outgoing.containsKey(item.h.id)) onOpenHomework(item.h.id) },
-                            onToggleDone = {
-                                if (!outgoing.containsKey(item.h.id)) {
-                                    outgoing[item.h.id] = item to visibleItems.indexOf(item)
-                                    vm.complete(item.h.id) {
-                                        outgoing.remove(item.h.id)
-                                        animationFinished.remove(item.h.id)
-                                        scope.launch { snackbar.showSnackbar("未能保存完成状态，请重试") }
-                                    }
+                            done = checking.containsKey(item.h.id),
+                            onOpen = {
+                                if (!outgoing.containsKey(item.h.id) && !checking.containsKey(item.h.id)) {
+                                    vm.lastOpenedItem = item
+                                    vm.lastOpenedIndex = visibleItems.indexOf(item).coerceAtLeast(0)
+                                    onOpenHomework(item.h.id)
                                 }
                             },
+                            onToggleDone = { playCompletion(item, visibleItems.indexOf(item).coerceAtLeast(0), persist = true) },
                         )
                     }
                     }
@@ -469,25 +489,38 @@ private fun MottoCard(
 ) {
     val marginInk = MaterialTheme.colorScheme.primary
     var clipped by remember(text) { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(5.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = .90f))
-            .drawBehind { drawLine(marginInk, Offset.Zero, Offset(0f, size.height), 3.dp.toPx()) }
-            .padding(16.dp),
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(5.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .92f),
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .drawBehind { drawLine(marginInk, Offset.Zero, Offset(0f, size.height), 3.5.dp.toPx()) }
+                .padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 14.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("“", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    "“",
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 24.sp),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(5.dp))
                 Text(
                     "给自己的话",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = onEdit, modifier = Modifier.size(40.dp)) {
-                    Icon(Icons.Outlined.Edit, contentDescription = "编辑给自己的话", modifier = Modifier.size(18.dp))
+                IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Outlined.Edit,
+                        contentDescription = "编辑给自己的话",
+                        modifier = Modifier.size(17.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             Spacer(Modifier.height(4.dp))
