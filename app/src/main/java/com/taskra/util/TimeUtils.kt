@@ -1,12 +1,14 @@
 package com.taskra.util
 
 import com.taskra.data.DeadlineType
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 /** 可注入时钟：生产用系统时钟，测试用 FakeClock。 */
 interface AppClock {
@@ -101,17 +103,67 @@ object TimeUtils {
         return !d.isBefore(today) && !d.isAfter(today.plusDays(6))
     }
 
-    fun formatDeadline(type: String, date: String?, time: String?, zoneId: String?): String {
+    private fun weekdayChar(dayOfWeek: DayOfWeek): String = when (dayOfWeek) {
+        DayOfWeek.MONDAY -> "一"
+        DayOfWeek.TUESDAY -> "二"
+        DayOfWeek.WEDNESDAY -> "三"
+        DayOfWeek.THURSDAY -> "四"
+        DayOfWeek.FRIDAY -> "五"
+        DayOfWeek.SATURDAY -> "六"
+        DayOfWeek.SUNDAY -> "日"
+    }
+
+    fun formatDeadline(
+        type: String,
+        date: String?,
+        time: String?,
+        zoneId: String?,
+        clock: AppClock = SystemClock,
+    ): String {
         if (type == DeadlineType.NONE || date.isNullOrBlank()) return "无截止时间"
         val d = localDateOfDeadline(date) ?: return "无截止时间"
         val zone = zoneOf(zoneId)
-        val nowYear = ZonedDateTime.now(zone).year
-        val datePart = if (d.year == nowYear) d.format(DisplayDate) else d.format(DisplayDateYear)
+        val today = Instant.ofEpochMilli(clock.nowMillis()).atZone(zone).toLocalDate()
+        val diff = ChronoUnit.DAYS.between(today, d)
+        val datePart = when (diff) {
+            0L -> "今天"
+            1L -> "明天"
+            2L -> "后天"
+            -1L -> "昨天"
+            in 3L..6L -> "周${weekdayChar(d.dayOfWeek)}（${d.format(DisplayDate)}）"
+            else -> if (d.year == today.year) d.format(DisplayDate) else d.format(DisplayDateYear)
+        }
         return if (type == DeadlineType.DATETIME && !time.isNullOrBlank()) {
             "$datePart $time 截止"
         } else {
-            "$datePart 当天结束前截止"
+            when (diff) {
+                in -1L..2L -> "${datePart}结束前"
+                in 3L..6L -> "${datePart}截止"
+                else -> "$datePart 截止"
+            }
         }
+    }
+
+    /** 紧凑截止文案，供编辑器按钮等窄空间使用。 */
+    fun formatDeadlineShort(
+        type: String,
+        date: String?,
+        time: String?,
+        zoneId: String?,
+        clock: AppClock = SystemClock,
+    ): String {
+        if (type == DeadlineType.NONE || date.isNullOrBlank()) return "截止时间"
+        val d = localDateOfDeadline(date) ?: return "截止时间"
+        val zone = zoneOf(zoneId)
+        val today = Instant.ofEpochMilli(clock.nowMillis()).atZone(zone).toLocalDate()
+        val shortDate = when (ChronoUnit.DAYS.between(today, d)) {
+            0L -> "今天"
+            1L -> "明天"
+            2L -> "后天"
+            -1L -> "昨天"
+            else -> if (d.year == today.year) d.format(DisplayDate) else d.format(DisplayDateYear)
+        }
+        return if (type == DeadlineType.DATETIME && !time.isNullOrBlank()) "$shortDate $time" else shortDate
     }
 
     fun todayString(zone: ZoneId = ZoneId.systemDefault()): String =

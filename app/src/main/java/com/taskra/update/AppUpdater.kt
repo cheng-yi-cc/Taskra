@@ -5,6 +5,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +30,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.taskra.TaskraApp
+import com.taskra.ui.motion.LocalReduceMotion
+import com.taskra.ui.motion.TaskraMotion
+import com.taskra.ui.motion.appleContentSize
 import com.taskra.util.postOnMain
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -581,6 +587,7 @@ fun UpdateDialogHost(updater: AppUpdater) {
     val info = state.availableUpdate
     if (!state.showDialog || info == null) return
 
+    val reduced = LocalReduceMotion.current
     val dl = state.downloadState
     val isDownloading = dl is UpdateDownloadState.Downloading
 
@@ -596,7 +603,8 @@ fun UpdateDialogHost(updater: AppUpdater) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 320.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(rememberScrollState())
+                    .appleContentSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
@@ -617,48 +625,61 @@ fun UpdateDialogHost(updater: AppUpdater) {
                     )
                 }
 
-                when (dl) {
-                    is UpdateDownloadState.Downloading -> {
-                        Spacer(Modifier.height(4.dp))
-                        val p = dl.progress
-                        if (p != null) {
-                            LinearProgressIndicator(
-                                progress = { p },
-                                modifier = Modifier.fillMaxWidth().testTag("update_progress"),
-                            )
+                AnimatedContent(
+                    targetState = dl::class,
+                    transitionSpec = { TaskraMotion.crossfadeSpec(reduced) },
+                    label = "updateDownloadPhase",
+                ) {
+                    when (val cur = state.downloadState) {
+                        is UpdateDownloadState.Downloading -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Spacer(Modifier.height(4.dp))
+                                val p = cur.progress
+                                if (p != null) {
+                                    val animatedProgress by animateFloatAsState(
+                                        targetValue = p,
+                                        animationSpec = tween(if (reduced) 0 else 120, easing = TaskraMotion.Standard),
+                                        label = "updateDlProgress",
+                                    )
+                                    LinearProgressIndicator(
+                                        progress = { animatedProgress },
+                                        modifier = Modifier.fillMaxWidth().testTag("update_progress"),
+                                    )
+                                    Text(
+                                        "正在下载并校验：${(p * 100).toInt()}%（${formatBytes(cur.downloadedBytes)} / ${formatBytes(cur.totalBytes)}）",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().testTag("update_progress"))
+                                    Text(
+                                        "正在下载并校验：已下载 ${formatBytes(cur.downloadedBytes)}",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                        is UpdateDownloadState.ReadyToInstall -> {
                             Text(
-                                "正在下载并校验：${(p * 100).toInt()}%（${formatBytes(dl.downloadedBytes)} / ${formatBytes(dl.totalBytes)}）",
+                                if (state.awaitingInstallPermission) {
+                                    "安装包已通过 SHA-256 校验，请在系统设置中允许「安装未知应用」后完成安装。"
+                                } else {
+                                    "安装包已就绪并通过完整性校验，点击下方按钮立即安装。"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        } else {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().testTag("update_progress"))
-                            Text(
-                                "正在下载并校验：已下载 ${formatBytes(dl.downloadedBytes)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = MaterialTheme.colorScheme.primary,
                             )
                         }
+                        is UpdateDownloadState.Error -> {
+                            Text(
+                                cur.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        UpdateDownloadState.Idle -> Unit
                     }
-                    is UpdateDownloadState.ReadyToInstall -> {
-                        Text(
-                            if (state.awaitingInstallPermission) {
-                                "安装包已通过 SHA-256 校验，请在系统设置中允许「安装未知应用」后完成安装。"
-                            } else {
-                                "安装包已就绪并通过完整性校验，点击下方按钮立即安装。"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                    is UpdateDownloadState.Error -> {
-                        Text(
-                            dl.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                    UpdateDownloadState.Idle -> Unit
                 }
             }
         },

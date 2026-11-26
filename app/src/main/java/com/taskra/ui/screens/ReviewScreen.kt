@@ -1,9 +1,15 @@
 package com.taskra.ui.screens
 
 import com.taskra.ui.components.notebookPaper
-
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import com.taskra.ui.motion.LocalReduceMotion
+import com.taskra.ui.motion.TaskraMotion
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -98,10 +104,22 @@ fun ReviewScreen(
         }
     }
 
+    val reduced = LocalReduceMotion.current
+    val listState = rememberLazyListState()
+    val scrolled by remember(listState) {
+        derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 8 }
+    }
+    val progressRatio by animateFloatAsState(
+        targetValue = if (ids.isEmpty()) 0f else practiced.toFloat() / ids.size,
+        animationSpec = tween(if (reduced) 0 else TaskraMotion.StandardMs, easing = TaskraMotion.FluidOut),
+        label = "reviewProgress",
+    )
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("重新练习") },
+                scrolled = scrolled,
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Outlined.ArrowBack, contentDescription = "返回")
@@ -117,6 +135,7 @@ fun ReviewScreen(
             return@Scaffold
         }
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize().notebookPaper().padding(pad),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp, 16.dp, 24.dp, 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -124,15 +143,15 @@ fun ReviewScreen(
             item {
                 Text(
                     "已练 $practiced / ${ids.size} · 待复习 $needRetry",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
                 )
                 Spacer(Modifier.height(6.dp))
                 LinearProgressIndicator(
-                    progress = { if (ids.isEmpty()) 0f else practiced.toFloat() / ids.size },
+                    progress = { progressRatio },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(4.dp))
-                Text("第 ${if (ids.isEmpty()) 0 else idx + 1} / ${ids.size} 项", style = MaterialTheme.typography.labelLarge)
+                Text("第 ${if (ids.isEmpty()) 0 else idx + 1} / ${ids.size} 项", style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"))
             }
             if (unavailable) {
                 item {
@@ -165,13 +184,19 @@ fun ReviewScreen(
                 }
                 item {
                     val cur = currentId?.let { resultMap[it] } ?: ReviewResult.NONE
-                    Text(
-                        "当前结果：" + when (cur) {
-                            ReviewResult.MASTERED -> "这次会做了"
-                            ReviewResult.NEED_RETRY -> "还需要再练"
-                            else -> "尚未标记"
-                        },
-                    )
+                    AnimatedContent(
+                        targetState = cur,
+                        transitionSpec = { TaskraMotion.crossfadeSpec(reduced) },
+                        label = "reviewResultText",
+                    ) { result ->
+                        Text(
+                            "当前结果：" + when (result) {
+                                ReviewResult.MASTERED -> "这次会做了"
+                                ReviewResult.NEED_RETRY -> "还需要再练"
+                                else -> "尚未标记"
+                            },
+                        )
+                    }
                     Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { mark(ReviewResult.MASTERED) }, modifier = Modifier.weight(1f)) {

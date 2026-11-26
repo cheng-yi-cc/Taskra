@@ -1,8 +1,14 @@
 package com.taskra.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Drafts
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
@@ -38,11 +45,15 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -61,10 +72,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,14 +97,20 @@ import com.taskra.ui.components.notebookPaper
 import com.taskra.ui.components.rememberDragOrder
 import com.taskra.ui.components.reorderItemModifier
 import com.taskra.ui.filterTodo
+import com.taskra.ui.motion.LocalReduceMotion
+import com.taskra.ui.motion.RollingCountText
+import com.taskra.ui.motion.TaskraMotion
+import com.taskra.ui.motion.appleContentSize
+import com.taskra.ui.motion.applePressScale
 import com.taskra.util.HomeworkSort
 import com.taskra.util.TimeUtils
 import com.taskra.util.ordered
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** 对钩描完再消散：钩 320ms，留一点余量。 */
+/** 对钩描完再消散：钩 310ms，留一点余量；减少动态效果模式下短暂停顿后直接淡出。 */
 private const val CHECK_TICK_MS = 340L
+private const val CHECK_TICK_REDUCED_MS = 90L
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -98,7 +118,7 @@ fun TodoScreen(
     app: TaskraApp,
     vm: AppViewModel,
     onOpenHomework: (String) -> Unit,
-    onNewHomework: () -> Unit,
+    onNewHomework: (courseId: String?) -> Unit,
     onOpenDrafts: () -> Unit,
 ) {
     val prefs by vm.prefs.collectAsState()
@@ -180,7 +200,7 @@ fun TodoScreen(
     val filterActive = filterCourse != null || filterDue != "ALL" || filterSem != null
 
     var showMottoEdit by remember { mutableStateOf(false) }
-    var mottoDraft by remember { mutableStateOf(prefs.mottoText) }
+    var mottoDraft by remember { mutableStateOf(TextFieldValue(prefs.mottoText, TextRange(prefs.mottoText.length))) }
     var mottoExpanded by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     var showFilters by remember { mutableStateOf(false) }
@@ -209,6 +229,8 @@ fun TodoScreen(
                 .forEach { (item, index) -> add(index.coerceIn(0, size), item) }
         }
 
+    val reduced = LocalReduceMotion.current
+
     /** 完成动效：先画对钩，再整张卡片消散。persist=false 用于“从作业页标记完成后返回”。 */
     fun playCompletion(item: TodoUiItem, index: Int, persist: Boolean) {
         val id = item.h.id
@@ -221,7 +243,7 @@ fun TodoScreen(
             }
         }
         scope.launch {
-            delay(CHECK_TICK_MS)
+            delay(if (reduced) CHECK_TICK_REDUCED_MS else CHECK_TICK_MS)
             val entry = checking.remove(id) ?: return@launch
             outgoing[id] = entry
         }
@@ -249,7 +271,10 @@ fun TodoScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            com.taskra.ui.components.NotebookFab("新建作业", onNewHomework)
+            com.taskra.ui.components.NotebookFab(
+                "新建作业",
+                onClick = { onNewHomework(filterCourse?.takeIf { it != "UNCAT" }) },
+            )
         },
     ) { pad ->
         LazyColumn(
@@ -265,46 +290,213 @@ fun TodoScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // 标题与搜索入口
-            item {
+            item(key = "todo_header") {
+                val filterTint by animateColorAsState(
+                    targetValue = if (filterActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    animationSpec = TaskraMotion.colorSpec(reduced, TaskraMotion.QuickMs),
+                    label = "filterIconTint",
+                )
+                val searchTint by animateColorAsState(
+                    targetValue = if (query.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    animationSpec = TaskraMotion.colorSpec(reduced, TaskraMotion.QuickMs),
+                    label = "searchIconTint",
+                )
+                val draftsInteraction = remember { MutableInteractionSource() }
+                val filterInteraction = remember { MutableInteractionSource() }
+                val searchInteraction = remember { MutableInteractionSource() }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     com.taskra.ui.components.NotebookHeading("待办", Modifier.weight(1f))
-                    IconButton(onClick = onOpenDrafts) {
-                        BadgedBox(badge = { if (drafts.isNotEmpty()) Badge { Text("${drafts.size}") } }) {
-                            Icon(Icons.Outlined.Drafts, "草稿箱")
+                    IconButton(
+                        onClick = onOpenDrafts,
+                        interactionSource = draftsInteraction,
+                        modifier = Modifier.applePressScale(draftsInteraction, 0.90f),
+                    ) {
+                        BadgedBox(badge = {
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = drafts.isNotEmpty(),
+                                enter = TaskraMotion.popEnter(reduced),
+                                exit = TaskraMotion.popExit(reduced),
+                            ) {
+                                Badge {
+                                    RollingCountText(
+                                        count = drafts.size,
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
+                            }
+                        }) {
+                            Icon(
+                                Icons.Outlined.Drafts,
+                                "草稿箱",
+                                tint = if (drafts.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
                         }
                     }
-                    IconButton(onClick = { draftCourse = filterCourse; draftDue = filterDue; draftSort = prefs.sortMode; showFilters = true }) {
-                        Icon(Icons.Outlined.Tune, "筛选与排序", tint = if (filterActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    IconButton(
+                        onClick = { draftCourse = filterCourse; draftDue = filterDue; draftSort = prefs.sortMode; showFilters = true },
+                        interactionSource = filterInteraction,
+                        modifier = Modifier.applePressScale(filterInteraction, 0.90f),
+                    ) {
+                        Icon(Icons.Outlined.Tune, "筛选与排序", tint = filterTint)
                     }
-                    IconButton(onClick = { draftQuery = query; showSearch = true }) {
-                        Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = if (query.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    IconButton(
+                        onClick = { draftQuery = query; showSearch = true },
+                        interactionSource = searchInteraction,
+                        modifier = Modifier.applePressScale(searchInteraction, 0.90f),
+                    ) {
+                        Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = searchTint)
                     }
                 }
             }
 
             // 给自己的话
             if (prefs.mottoVisible) {
-                item {
+                item(key = "todo_motto") {
                     MottoCard(
                         text = prefs.mottoText,
                         expanded = mottoExpanded,
                         onToggleExpand = { mottoExpanded = !mottoExpanded },
-                        onEdit = { mottoDraft = prefs.mottoText; showMottoEdit = true },
+                        onEdit = {
+                            mottoDraft = TextFieldValue(prefs.mottoText, TextRange(prefs.mottoText.length))
+                            showMottoEdit = true
+                        },
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = TaskraMotion.listFadeSpec(reduced),
+                            fadeOutSpec = TaskraMotion.listFadeSpec(reduced),
+                            placementSpec = TaskraMotion.listPlacementSpec(reduced),
+                        ),
                     )
                 }
             }
 
-            // 待办数量和截止概览
-            item {
-                val label = if (filtering) "${todoItems.size} 项结果"
-                else "${todoAll.size} 项待办" + if (overdueCount > 0) " · $overdueCount 项逾期" else ""
-                Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // 待办数量和截止概览（数字平滑滚动，不跳字）
+            item(key = "todo_summary") {
+                val summaryColor = MaterialTheme.colorScheme.onSurfaceVariant
+                val summaryStyle = MaterialTheme.typography.bodyMedium
+                AnimatedContent(
+                    targetState = filtering,
+                    transitionSpec = { TaskraMotion.crossfadeSpec(reduced) },
+                    label = "todoSummaryMode",
+                    modifier = Modifier.animateItem(
+                        fadeInSpec = TaskraMotion.listFadeSpec(reduced),
+                        fadeOutSpec = TaskraMotion.listFadeSpec(reduced),
+                        placementSpec = TaskraMotion.listPlacementSpec(reduced),
+                    ),
+                ) { isFiltering ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isFiltering) {
+                            RollingCountText(todoItems.size, style = summaryStyle, color = summaryColor)
+                            Text(" 项结果", style = summaryStyle, color = summaryColor)
+                        } else {
+                            RollingCountText(todoAll.size, style = summaryStyle, color = summaryColor)
+                            Text(" 项待办", style = summaryStyle, color = summaryColor)
+                            AnimatedVisibility(
+                                visible = overdueCount > 0,
+                                enter = TaskraMotion.popEnter(reduced),
+                                exit = TaskraMotion.popExit(reduced),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(" · ", style = summaryStyle, color = summaryColor)
+                                    RollingCountText(overdueCount, style = summaryStyle, color = MaterialTheme.colorScheme.error)
+                                    Text(" 项逾期", style = summaryStyle, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 当前生效的搜索与筛选胶囊：仅在筛选时出现，轻点即可单项关闭，无需再钻弹窗
+            if (filtering) {
+                item(key = "todo_active_filters") {
+                    val activeCount = (if (query.isNotBlank()) 1 else 0) +
+                        (if (filterCourse != null) 1 else 0) +
+                        (if (filterDue != "ALL") 1 else 0)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("todo_active_filters")
+                            .animateItem(
+                                fadeInSpec = TaskraMotion.listFadeSpec(reduced),
+                                fadeOutSpec = TaskraMotion.listFadeSpec(reduced),
+                                placementSpec = TaskraMotion.listPlacementSpec(reduced),
+                            ),
+                    ) {
+                        if (query.isNotBlank()) {
+                            InputChip(
+                                selected = true,
+                                onClick = { vm.query.value = "" },
+                                label = { Text("搜索：${query.trim()}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                trailingIcon = { Icon(Icons.Outlined.Close, "清除搜索词", Modifier.size(16.dp)) },
+                            )
+                        }
+                        if (filterCourse != null) {
+                            val label = if (filterCourse == "UNCAT") "未分类" else courseMap[filterCourse]?.name ?: "课程"
+                            InputChip(
+                                selected = true,
+                                onClick = { vm.filterCourseId.value = null },
+                                label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                trailingIcon = { Icon(Icons.Outlined.Close, "清除课程筛选", Modifier.size(16.dp)) },
+                            )
+                        }
+                        if (filterDue != "ALL") {
+                            val dueLabel = when (filterDue) {
+                                "OVERDUE" -> "已逾期"
+                                "TODAY" -> "今天截止"
+                                "WEEK" -> "未来七天"
+                                "NONE" -> "无截止时间"
+                                else -> filterDue
+                            }
+                            InputChip(
+                                selected = true,
+                                onClick = { vm.filterDue.value = "ALL" },
+                                label = { Text(dueLabel) },
+                                trailingIcon = { Icon(Icons.Outlined.Close, "清除截止筛选", Modifier.size(16.dp)) },
+                            )
+                        }
+                        if (activeCount >= 2) {
+                            AssistChip(
+                                onClick = {
+                                    vm.query.value = ""
+                                    vm.filterCourseId.value = null
+                                    vm.filterDue.value = "ALL"
+                                    vm.filterSemesterId.value = null
+                                },
+                                label = { Text("全部清除") },
+                            )
+                        }
+                    }
+                }
             }
 
             // 作业列表
             if (visibleItems.isEmpty()) {
-                item {
-                    NotebookEmpty(if (filtering) "暂无结果" else "暂无待办")
+                item(key = "todo_empty") {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .animateItem(
+                                fadeInSpec = TaskraMotion.listFadeSpec(reduced),
+                                fadeOutSpec = TaskraMotion.listFadeSpec(reduced),
+                                placementSpec = TaskraMotion.listPlacementSpec(reduced),
+                            ),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        NotebookEmpty(title = if (filtering) "暂无结果" else "暂无待办")
+                        if (filtering) {
+                            OutlinedButton(
+                                onClick = {
+                                    vm.query.value = ""
+                                    vm.filterCourseId.value = null
+                                    vm.filterDue.value = "ALL"
+                                    vm.filterSemesterId.value = null
+                                },
+                            ) { Text("清除筛选") }
+                        }
+                    }
                 }
             } else {
                 items(displayedItems, key = { it.h.id }) { item ->
@@ -312,7 +504,28 @@ fun TodoScreen(
                         resetKey = swipeReset,
                         enabled = !outgoing.containsKey(item.h.id) && !checking.containsKey(item.h.id) && drag.dragging == null,
                         modifier = reorderItemModifier(drag, item.h.id, outgoing.isEmpty() && checking.isEmpty()).testTag("swipe_homework:${item.h.id}"),
-                        onDelete = { vm.trashHomework(item.h.id) { swipeReset++; scope.launch { snackbar.showSnackbar("删除失败，请重试") } } },
+                        onDelete = {
+                            vm.trashHomework(
+                                id = item.h.id,
+                                onSuccess = {
+                                    scope.launch {
+                                        snackbar.currentSnackbarData?.dismiss()
+                                        val res = snackbar.showSnackbar(
+                                            message = "已移入回收站",
+                                            actionLabel = "撤销",
+                                            duration = SnackbarDuration.Short,
+                                        )
+                                        if (res == SnackbarResult.ActionPerformed) {
+                                            vm.restoreHomework(item.h.id) {
+                                                scope.launch { snackbar.showSnackbar("恢复失败，请重试") }
+                                            }
+                                            swipeReset++
+                                        }
+                                    }
+                                },
+                                onFailure = { swipeReset++; scope.launch { snackbar.showSnackbar("删除失败，请重试") } },
+                            )
+                        },
                     ) {
                     TileDismiss(
                         removing = outgoing.containsKey(item.h.id),
@@ -355,12 +568,24 @@ fun TodoScreen(
                     placeholder = { Text("搜索作业") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { applySearch() }),
-                    trailingIcon = { if (draftQuery.isNotEmpty()) IconButton(onClick = { draftQuery = "" }) {
-                        Icon(Icons.Outlined.Close, "清除搜索")
-                    } },
+                    trailingIcon = {
+                        AnimatedVisibility(
+                            visible = draftQuery.isNotEmpty(),
+                            enter = TaskraMotion.popEnter(reduced),
+                            exit = TaskraMotion.popExit(reduced),
+                        ) {
+                            IconButton(onClick = { draftQuery = "" }) {
+                                Icon(Icons.Outlined.Close, "清除搜索")
+                            }
+                        }
+                    },
                 )
             },
-            confirmButton = { TextButton(onClick = { applySearch() }) { Text("搜索") } },
+            confirmButton = {
+                TextButton(onClick = { applySearch() }) {
+                    Text(if (query.isNotBlank() && draftQuery.isBlank()) "清除搜索" else "搜索")
+                }
+            },
             dismissButton = { TextButton(onClick = { showSearch = false }) { Text("取消") } },
         )
     }
@@ -369,7 +594,7 @@ fun TodoScreen(
             modifier = Modifier.testTag("filter_dialog"),
             onDismissRequest = { showFilters = false },
             title = { Text("筛选与排序") },
-            text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+            text = { Column(Modifier.verticalScroll(rememberScrollState()).appleContentSize()) {
                 // 课程筛选
                 Text("课程", style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.height(6.dp))
@@ -414,15 +639,21 @@ fun TodoScreen(
                         )
                     }
                 }
-                if ((draftCourse != null || draftDue != "ALL")) {
-                    Spacer(Modifier.height(6.dp))
-                    AssistChip(
-                        onClick = {
-                            draftCourse = null
-                            draftDue = "ALL"
-                        },
-                        label = { Text("清除筛选") },
-                    )
+                AnimatedVisibility(
+                    visible = draftCourse != null || draftDue != "ALL",
+                    enter = TaskraMotion.expandEnter(reduced),
+                    exit = TaskraMotion.collapseExit(reduced),
+                ) {
+                    Column {
+                        Spacer(Modifier.height(6.dp))
+                        AssistChip(
+                            onClick = {
+                                draftCourse = null
+                                draftDue = "ALL"
+                            },
+                            label = { Text("清除筛选") },
+                        )
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("排序", style = MaterialTheme.typography.labelLarge)
@@ -445,6 +676,8 @@ fun TodoScreen(
     }
 
     if (showMottoEdit) {
+        val mottoFocus = remember { FocusRequester() }
+        var mottoFocusRequested by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { showMottoEdit = false },
             title = { Text("给自己的话") },
@@ -452,27 +685,38 @@ fun TodoScreen(
                 Column {
                     OutlinedTextField(
                         value = mottoDraft,
-                        onValueChange = { if (it.length <= 300) mottoDraft = it },
-                        modifier = Modifier.fillMaxWidth().testTag("motto_field"),
+                        onValueChange = { if (it.text.length <= 300) mottoDraft = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(mottoFocus)
+                            .onGloballyPositioned {
+                                if (!mottoFocusRequested) {
+                                    mottoFocusRequested = true
+                                    mottoFocus.requestFocus()
+                                }
+                            }
+                            .testTag("motto_field"),
                         placeholder = { Text("写一句给自己的话…") },
                         minLines = 3,
                         maxLines = 8,
-                        supportingText = { Text("${mottoDraft.length}/300") },
+                        supportingText = { Text("${mottoDraft.text.length}/300") },
                     )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    scope.launch { app.prefs.setMotto(mottoDraft) }
+                    scope.launch { app.prefs.setMotto(mottoDraft.text) }
                     showMottoEdit = false
                 }) { Text("保存") }
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = {
-                        scope.launch { app.prefs.setMotto("") }
-                        showMottoEdit = false
-                    }) { Text("清空") }
+                    if (mottoDraft.text.isNotEmpty()) {
+                        TextButton(onClick = {
+                            scope.launch { app.prefs.setMotto("") }
+                            showMottoEdit = false
+                        }) { Text("清空") }
+                    }
                     TextButton(onClick = { showMottoEdit = false }) { Text("取消") }
                 }
             },
@@ -486,11 +730,18 @@ private fun MottoCard(
     expanded: Boolean,
     onToggleExpand: () -> Unit,
     onEdit: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val reduced = LocalReduceMotion.current
     val marginInk = MaterialTheme.colorScheme.primary
     var clipped by remember(text) { mutableStateOf(false) }
+    val arrowRotationState = animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = if (reduced) tween(0) else TaskraMotion.spatialSpring(),
+        label = "mottoArrow",
+    )
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(5.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = .92f),
         border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -498,6 +749,7 @@ private fun MottoCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .appleContentSize()
                 .drawBehind { drawLine(marginInk, Offset.Zero, Offset(0f, size.height), 3.5.dp.toPx()) }
                 .padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 14.dp),
         ) {
@@ -514,7 +766,12 @@ private fun MottoCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
+                val editInteraction = remember { MutableInteractionSource() }
+                IconButton(
+                    onClick = onEdit,
+                    interactionSource = editInteraction,
+                    modifier = Modifier.size(36.dp).applePressScale(editInteraction, 0.88f),
+                ) {
                     Icon(
                         Icons.Outlined.Edit,
                         contentDescription = "编辑给自己的话",
@@ -532,8 +789,22 @@ private fun MottoCard(
                 onTextLayout = { if (!expanded) clipped = it.hasVisualOverflow },
                 modifier = Modifier.clickable(onClick = onToggleExpand),
             )
-            if (clipped || expanded) {
-                TextButton(onClick = onToggleExpand) { Text(if (expanded) "收起" else "展开") }
+            AnimatedVisibility(
+                visible = clipped || expanded,
+                enter = TaskraMotion.expandEnter(reduced),
+                exit = TaskraMotion.collapseExit(reduced),
+            ) {
+                TextButton(onClick = onToggleExpand) {
+                    Text(if (expanded) "收起" else "展开")
+                    Spacer(Modifier.width(2.dp))
+                    Icon(
+                        Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .graphicsLayer { rotationZ = arrowRotationState.value },
+                    )
+                }
             }
         }
     }

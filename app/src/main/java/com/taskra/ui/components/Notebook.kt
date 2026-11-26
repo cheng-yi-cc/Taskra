@@ -1,8 +1,10 @@
 package com.taskra.ui.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -10,35 +12,65 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Canvas as ComposeCanvas
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageBitmapConfig
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.taskra.ui.motion.LocalReduceMotion
+import com.taskra.ui.motion.TaskraMotion
+import com.taskra.ui.motion.applePressScale
+import kotlin.math.roundToInt
 
-/** 静止的纸格共用一层绘制，不用位图、不在重组时生成随机噪点。 */
+/**
+ * 方格纸底纹：将纸底与 24dp 网格合烘为一张不透明 24dp×24dp 单元纹理，经 GPU ImageShader 单次平铺绘制。
+ * 无矢量 Path 细分、无全屏 ColorFilter 混合，长列表滚动零额外开销。
+ */
 @Composable
 fun Modifier.notebookPaper(): Modifier {
+    val density = LocalDensity.current
+    val stepPx = with(density) { 24.dp.toPx().roundToInt().coerceAtLeast(1) }
+    val strokePx = with(density) { 0.5.dp.toPx().coerceAtLeast(1f) }
     val paper = MaterialTheme.colorScheme.background
     val grid = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.46f)
-    return background(paper).drawWithCache {
-        val step = 24.dp.toPx()
-        val lines = Path().apply {
-            var x = 0f
-            while (x <= size.width) { moveTo(x, 0f); lineTo(x, size.height); x += step }
-            var y = 0f
-            while (y <= size.height) { moveTo(0f, y); lineTo(size.width, y); y += step }
+    val tileBrush = remember(stepPx, strokePx, paper, grid) {
+        val bmp = ImageBitmap(stepPx, stepPx, ImageBitmapConfig.Argb8888)
+        val c = ComposeCanvas(bmp)
+        val bgPaint = Paint().apply { color = paper }
+        c.drawRect(0f, 0f, stepPx.toFloat(), stepPx.toFloat(), bgPaint)
+        val linePaint = Paint().apply {
+            color = grid
+            isAntiAlias = false
         }
-        onDrawBehind { drawPath(lines, grid, style = Stroke(0.5.dp.toPx())) }
+        c.drawRect(0f, 0f, strokePx, stepPx.toFloat(), linePaint)
+        c.drawRect(0f, 0f, stepPx.toFloat(), strokePx, linePaint)
+        ShaderBrush(ImageShader(bmp, TileMode.Repeated, TileMode.Repeated))
+    }
+    return drawBehind {
+        drawRect(brush = tileBrush, size = Size(size.width, size.height))
     }
 }
 
@@ -80,7 +112,7 @@ fun NotebookHeading(title: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** 加号悬浮按钮：只用图标，颜色跟随主题（朱红底 + 反差图标色）。 */
+/** 加号悬浮按钮：只用图标，颜色跟随主题（朱红底 + 反差图标色），按下带轻盈弹性回弹。 */
 @Composable
 fun NotebookFab(
     description: String,
@@ -88,13 +120,17 @@ fun NotebookFab(
     icon: ImageVector = Icons.Outlined.Add,
     modifier: Modifier = Modifier,
 ) {
+    val interaction = remember { MutableInteractionSource() }
     FloatingActionButton(
         onClick = onClick,
-        modifier = modifier.semantics { contentDescription = description },
+        interactionSource = interaction,
+        modifier = modifier
+            .applePressScale(interaction, pressedScale = 0.91f)
+            .semantics { contentDescription = description },
         shape = CircleShape,
         containerColor = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
-        elevation = FloatingActionButtonDefaults.elevation(2.dp, 3.dp, 2.dp, 2.dp),
+        elevation = FloatingActionButtonDefaults.elevation(2.dp, 4.dp, 4.dp, 3.dp),
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp))
     }
@@ -122,11 +158,26 @@ fun NotebookTopBar(
     )
 }
 
-/** 纸片感空状态卡片：手绘微倾便签纸 + 朱红对钩。 */
+/** 纸片感空状态卡片：手绘微倾便签纸 + 朱红对钩（出现时轻柔落纸并一笔描出对钩）。 */
 @Composable
 fun NotebookEmpty(title: String, modifier: Modifier = Modifier) {
+    val reduced = LocalReduceMotion.current
+    val appear = remember { Animatable(if (reduced) 1f else 0f) }
+    val checkDraw = remember { Animatable(if (reduced) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        if (!reduced) {
+            appear.animateTo(1f, tween(TaskraMotion.StandardMs, easing = TaskraMotion.FluidOut))
+            checkDraw.animateTo(1f, tween(260, easing = TaskraMotion.FluidOut))
+        }
+    }
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                val p = appear.value
+                alpha = p
+                if (!reduced) translationY = (1f - p) * 12.dp.toPx()
+            },
         shape = RoundedCornerShape(5.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
         border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -159,12 +210,27 @@ fun NotebookEmpty(title: String, modifier: Modifier = Modifier) {
                         cap = StrokeCap.Round,
                     )
                 }
-                val check = Path().apply {
-                    moveTo(size.width * .45f, size.height * .69f)
-                    lineTo(size.width * .60f, size.height * .80f)
-                    lineTo(size.width * .96f, size.height * .45f)
+                val t = checkDraw.value
+                if (t > 0f) {
+                    val a = Offset(size.width * .45f, size.height * .69f)
+                    val b = Offset(size.width * .60f, size.height * .80f)
+                    val c = Offset(size.width * .96f, size.height * .45f)
+                    val seg1 = (b - a).getDistance()
+                    val seg2 = (c - b).getDistance()
+                    val drawn = (seg1 + seg2) * t
+                    val check = Path().apply {
+                        moveTo(a.x, a.y)
+                        if (drawn <= seg1) {
+                            val f = if (seg1 > 0f) drawn / seg1 else 0f
+                            lineTo(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f)
+                        } else {
+                            lineTo(b.x, b.y)
+                            val f = if (seg2 > 0f) ((drawn - seg1) / seg2).coerceIn(0f, 1f) else 1f
+                            lineTo(b.x + (c.x - b.x) * f, b.y + (c.y - b.y) * f)
+                        }
+                    }
+                    drawPath(check, red, style = Stroke(2.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
                 }
-                drawPath(check, red, style = Stroke(2.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
             Spacer(Modifier.width(14.dp))
             Text(

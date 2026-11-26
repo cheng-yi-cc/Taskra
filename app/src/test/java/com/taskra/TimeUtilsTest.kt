@@ -67,4 +67,20 @@ class TimeUtilsTest {
         assertTrue(TimeUtils.isDueToday(DeadlineType.DATE, "2026-09-26", "Asia/Shanghai", nowShanghaiNoon))
         assertFalse(TimeUtils.isDueToday(DeadlineType.DATE, "2026-09-27", "Asia/Shanghai", nowShanghaiNoon))
     }
+
+    @Test
+    fun `截止文案相对化表达清晰可读`() {
+        val zone = "Asia/Shanghai"
+        // 2026-09-26 为周六
+        val now = FakeClock(millis(2026, 9, 26, 12, 0, zone))
+        assertEquals("今天结束前", TimeUtils.formatDeadline(DeadlineType.DATE, "2026-09-26", null, zone, now))
+        assertEquals("明天 23:59 截止", TimeUtils.formatDeadline(DeadlineType.DATETIME, "2026-09-27", "23:59", zone, now))
+        assertEquals("后天结束前", TimeUtils.formatDeadline(DeadlineType.DATE, "2026-09-28", null, zone, now))
+        assertEquals("昨天结束前", TimeUtils.formatDeadline(DeadlineType.DATE, "2026-09-25", null, zone, now))
+        assertEquals("周三（9月30日）截止", TimeUtils.formatDeadline(DeadlineType.DATE, "2026-09-30", null, zone, now))
+        assertEquals("10月10日 18:00 截止", TimeUtils.formatDeadline(DeadlineType.DATETIME, "2026-10-10", "18:00", zone, now))
+        assertEquals("2027年1月5日 截止", TimeUtils.formatDeadline(DeadlineType.DATE, "2027-01-05", null, zone, now))
+        assertEquals("明天 18:00", TimeUtils.formatDeadlineShort(DeadlineType.DATETIME, "2026-09-27", "18:00", zone, now))
+        assertEquals("截止时间", TimeUtils.formatDeadlineShort(DeadlineType.NONE, null, null, zone, now))
+    }
 }

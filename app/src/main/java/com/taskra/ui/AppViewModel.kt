@@ -66,8 +66,15 @@ class AppViewModel(private val app: TaskraApp) : ViewModel() {
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
     }
-    fun deleteDraft(id: String, onFailure: () -> Unit) = viewModelScope.launch {
-        try { app.repo.deleteDraft(id) }
+    fun deleteDraft(id: String, onSuccess: () -> Unit = {}, onFailure: () -> Unit) = viewModelScope.launch {
+        try {
+            app.repo.deleteDraft(id)
+            com.taskra.util.postOnMain(onSuccess)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
+    }
+    fun restoreDraft(draft: com.taskra.data.EditorDraft, onFailure: () -> Unit = {}) = viewModelScope.launch {
+        try { app.repo.saveDraft(draft) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
     }
@@ -84,13 +91,27 @@ class AppViewModel(private val app: TaskraApp) : ViewModel() {
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
     }
-    fun trashHomework(id: String, onFailure: () -> Unit) = viewModelScope.launch {
-        try { app.repo.moveToTrash(id) }
+    fun trashHomework(id: String, onSuccess: () -> Unit = {}, onFailure: () -> Unit) = viewModelScope.launch {
+        try {
+            app.repo.moveToTrash(id)
+            com.taskra.util.postOnMain(onSuccess)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
+    }
+    fun restoreHomework(id: String, onFailure: () -> Unit = {}) = viewModelScope.launch {
+        try { app.repo.restoreFromTrash(id) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
     }
-    fun trashCourse(id: String, onFailure: () -> Unit) = viewModelScope.launch {
-        try { app.repo.moveCourseToTrash(id) }
+    fun trashCourse(id: String, onSuccess: () -> Unit = {}, onFailure: () -> Unit) = viewModelScope.launch {
+        try {
+            app.repo.moveCourseToTrash(id)
+            com.taskra.util.postOnMain(onSuccess)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
+    }
+    fun restoreCourse(id: String, onFailure: () -> Unit = {}) = viewModelScope.launch {
+        try { app.repo.restoreCourse(id) }
         catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (_: Exception) { com.taskra.util.postOnMain(onFailure) }
     }

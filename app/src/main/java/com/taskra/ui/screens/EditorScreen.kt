@@ -1,11 +1,31 @@
 package com.taskra.ui.screens
 
 import com.taskra.ui.components.notebookPaper
-
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import coil.request.ImageRequest
+import com.taskra.ui.motion.LocalReduceMotion
+import com.taskra.ui.motion.TaskraMotion
+import com.taskra.ui.motion.appleContentSize
+import com.taskra.ui.motion.applePressScale
+import com.taskra.ui.motion.appleTactile
+import com.taskra.ui.motion.errorShake
 import androidx.room.withTransaction
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.withFrameNanos
 import android.net.Uri
 import android.Manifest
@@ -17,10 +37,19 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.input.ImeAction
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.taskra.data.AudioRecorder
@@ -76,6 +105,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.taskra.ui.components.PaperBackButton
 import com.taskra.ui.components.PaperTopBar as TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -123,6 +153,7 @@ import com.taskra.util.editableDocument
 import com.taskra.util.removeEditorAttachment
 import androidx.compose.foundation.clickable
 import com.taskra.util.SpanType
+import com.taskra.util.TimeUtils
 import com.taskra.util.TitleGenerator
 import com.taskra.util.adjustSpans
 import com.taskra.util.annotatedForEditing
@@ -171,9 +202,16 @@ fun EditorScreen(
         }
     }
     if (!editorLockHeld) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("正在同步…") }
+        Box(Modifier.fillMaxSize().notebookPaper(), contentAlignment = Alignment.Center) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text("正在同步…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         return
     }
+    val reduced = LocalReduceMotion.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val semesters by vm.semesters.collectAsState()
@@ -195,6 +233,8 @@ fun EditorScreen(
     var showCourseMenu by remember { mutableStateOf(false) }
     var showNewCourse by remember { mutableStateOf(false) }
     var newCourseName by remember { mutableStateOf("") }
+    var newCourseError by remember { mutableStateOf<String?>(null) }
+    var newCourseErrorShake by remember { mutableIntStateOf(0) }
     var showDeadline by remember { mutableStateOf(false) }
     var showTrashConfirm by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(Status.TODO) }
@@ -207,6 +247,7 @@ fun EditorScreen(
     val recorder = remember { AudioRecorder(app) }
     var recording by remember { mutableStateOf(false) }
     var recordingTime by remember { mutableStateOf(0L) }
+    var confirmCancelRec by remember { mutableStateOf(false) }
     var recordingTarget by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var formatMode by remember { mutableStateOf(false) }
     var activeId by remember { mutableStateOf<String?>(null) }
@@ -463,11 +504,27 @@ fun EditorScreen(
     }
 
     // 防抖与手动离开共用一把锁；发布先取消并等待旧保存，防止旧草稿复活。
+    // 新建作业被清空后不留空白草稿污染草稿箱：若曾写过草稿则一并清理。
+    fun isBlankNewDraft(): Boolean =
+        homeworkId == null && templateCourseId == null &&
+            title.isBlank() &&
+            deadlineType == DeadlineType.NONE &&
+            question.all { it.kind == BlockKind.TEXT && it.text.isBlank() }
+
     var saveJob by remember { mutableStateOf<Job?>(null) }
     suspend fun persistDraft(): Boolean = saveMutex.withLock {
         if (submitted) return@withLock true
         val snapshot = draftSnapshot()
         if (snapshot == savedSnapshot) return@withLock true
+        if (isBlankNewDraft()) {
+            try {
+                app.repo.deleteDraft(draftId)
+                savedSnapshot = snapshot
+                saveState = "草稿已保存"
+                return@withLock true
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { saveState = "保存失败"; return@withLock false }
+        }
         saveState = "保存中…"
         try {
             app.repo.saveDraft(snapshot)
@@ -596,6 +653,7 @@ fun EditorScreen(
             recordingTarget = insertTarget()
             recorder.start()
             recordingTime = 0
+            confirmCancelRec = false
             recording = true
         } catch (_: Exception) { scope.launch { snackbar.showSnackbar("无法开始录音，请检查麦克风权限") } }
     }
@@ -608,7 +666,13 @@ fun EditorScreen(
         else audioPermission.launch(Manifest.permission.RECORD_AUDIO)
     }
     LaunchedEffect(recording) {
-        while (recording) { recordingTime = recorder.elapsedMs; delay(200) }
+        while (recording) { recordingTime = recorder.elapsedMs; delay(100) }
+    }
+    LaunchedEffect(confirmCancelRec) {
+        if (confirmCancelRec) {
+            delay(3000)
+            confirmCancelRec = false
+        }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     val finishOnStop by rememberUpdatedState { finishRecording() }
@@ -634,7 +698,7 @@ fun EditorScreen(
         val sel = tfv?.selection ?: TextRange(b.text.length)
         if (type == SpanType.HEADING) {
             val line = if (sel.collapsed) lineRangeOf(b.text, sel.start) else sel.min until sel.max
-            if (line.isEmpty()) return "这一行没有文字"
+            if (line.isEmpty()) return "光标所在行还没有文字"
             val toggled = if (level == 0) com.taskra.util.clearMark(b.spans, SpanType.HEADING, line)
                 else com.taskra.util.setMark(b.spans, SpanType.HEADING, level, line)
             val ns = normalizeSpans(toggled, b.text.length)
@@ -642,7 +706,9 @@ fun EditorScreen(
             refreshField(id, b.text, ns)
             return null
         } else {
-            if (sel.collapsed) return "先选中要设置的文字"
+            if (sel.collapsed) {
+                return if (type == SpanType.BOLD) "请先长按选中要加粗的文字" else "请先长按选中要高亮的文字"
+            }
             val range = sel.min until sel.max
             val toggled = toggleMark(b.spans, type, 0, range)
             val ns = normalizeSpans(toggled, b.text.length)
@@ -654,6 +720,11 @@ fun EditorScreen(
 
     fun deleteAttachment(blockId: String) {
         val index = question.indexOfFirst { it.id == blockId }
+        if (index < 0) return
+        val removed = question[index]
+        val prevQuestion = question
+        val prevFields = fieldValues.toMap()
+        val prevActive = activeId
         val before = question.getOrNull(index - 1)
         question = removeEditorAttachment(question, blockId)
         fieldValues.keys.toList().filter { key -> question.none { it.id == key } }.forEach { fieldValues.remove(it) }
@@ -668,6 +739,21 @@ fun EditorScreen(
         activeId = before?.id?.takeIf { id -> question.any { it.id == id } }
             ?: question.firstOrNull { it.kind == BlockKind.TEXT }?.id
         if (imeShown) pendingFocusId = activeId
+        val label = if (removed.kind == BlockKind.AUDIO) "录音" else "图片"
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val res = snackbar.showSnackbar(
+                message = "已移除$label",
+                actionLabel = "撤销",
+                duration = SnackbarDuration.Short,
+            )
+            if (res == SnackbarResult.ActionPerformed) {
+                question = prevQuestion
+                fieldValues.clear()
+                fieldValues.putAll(prevFields)
+                activeId = prevActive
+            }
+        }
     }
 
     suspend fun doSave(markCompleted: Boolean = false) {
@@ -688,7 +774,11 @@ fun EditorScreen(
         val hasImg = cleaned.any { it.kind == BlockKind.IMAGE && it.imageId != null }
         if (!hasText && !hasImg && cleaned.none { it.kind == BlockKind.AUDIO && it.audioId != null }) {
             flushDraftNow()
-            snackbar.showSnackbar("请添加作业内容")
+            pendingFocusId = question.firstOrNull { it.kind == BlockKind.TEXT }?.id
+            scope.launch {
+                snackbar.currentSnackbarData?.dismiss()
+                snackbar.showSnackbar("请先写点作业内容，或插入图片、录音")
+            }
             return
         }
         // 课程归属的学期同样要校验：课程可能已随学期一起被删。
@@ -696,7 +786,10 @@ fun EditorScreen(
             ?.takeIf { app.repo.getSemester(it) != null }
             ?: ensureSemesterId()
         if (semId == null || app.repo.getSemester(semId) == null) {
-            snackbar.showSnackbar("课程准备失败，请重试")
+            scope.launch {
+                snackbar.currentSnackbarData?.dismiss()
+                snackbar.showSnackbar("课程准备失败，请重试")
+            }
             return
         }
         var cId = courseId
@@ -763,7 +856,10 @@ fun EditorScreen(
             catch (e: Exception) {
                 // 只有 Snackbar 时排查不到根因，保留一条日志。
                 android.util.Log.e("TaskraEditor", "作业保存失败", e)
-                snackbar.showSnackbar("作业保存失败，请重试")
+                scope.launch {
+                    snackbar.currentSnackbarData?.dismiss()
+                    snackbar.showSnackbar("作业保存失败，请重试")
+                }
             }
             finally { publishing = false }
         }
@@ -780,19 +876,40 @@ fun EditorScreen(
     }
     val activeSel = fieldValues[activeBlock?.id]?.selection
 
+    val docScrolled by remember(documentState) {
+        derivedStateOf { documentState.firstVisibleItemIndex > 0 || documentState.firstVisibleItemScrollOffset > 8 }
+    }
+    val courseMenuArrowState = animateFloatAsState(
+        targetValue = if (showCourseMenu) 180f else 0f,
+        animationSpec = if (reduced) tween(0) else TaskraMotion.spatialSpring(),
+        label = "editorCourseArrow",
+    )
+
+    val hasAnyContent = remember(question) {
+        question.any {
+            (it.kind == BlockKind.TEXT && it.text.isNotBlank()) ||
+                (it.kind == BlockKind.IMAGE && it.imageId != null) ||
+                (it.kind == BlockKind.AUDIO && it.audioId != null)
+        }
+    }
+    val saveReady = templateCourseId != null || hasAnyContent
+
     Scaffold(
         modifier = Modifier.imePadding(),
         topBar = {
             TopAppBar(
                 title = { Text(if (templateCourseId != null) "课程模板" else if (homeworkId == null) "新建作业" else "编辑作业", style = MaterialTheme.typography.titleMedium) },
+                scrolled = docScrolled,
                 navigationIcon = {
-                    IconButton(onClick = { leaveEditor() }, enabled = loaded && !publishing && !leaving && importing == 0) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = "返回")
-                    }
+                    PaperBackButton(
+                        onClick = { leaveEditor() },
+                        enabled = loaded && !publishing && !leaving && importing == 0,
+                    )
                 },
                 actions = {
                     DraftFeedback(saveState, saveRevision)
                     if (existingId != null) {
+                        val doneInteraction = remember { MutableInteractionSource() }
                         IconButton(
                             onClick = {
                                 if (status == Status.DONE) {
@@ -808,12 +925,21 @@ fun EditorScreen(
                                 } else runPublish(markCompleted = true)
                             },
                             enabled = loaded && !publishing && !leaving && importing == 0,
-                            modifier = Modifier.testTag("homework_done_toggle"),
+                            interactionSource = doneInteraction,
+                            modifier = Modifier
+                                .applePressScale(doneInteraction, 0.88f, loaded && !publishing && !leaving && importing == 0)
+                                .testTag("homework_done_toggle"),
                         ) {
-                            Icon(
-                                if (status == Status.DONE) Icons.Outlined.Undo else Icons.Outlined.CheckCircle,
-                                contentDescription = if (status == Status.DONE) "恢复为未完成" else "标记完成",
-                            )
+                            AnimatedContent(
+                                targetState = status == Status.DONE,
+                                transitionSpec = { TaskraMotion.iconSwapSpec(reduced) },
+                                label = "editorDoneIcon",
+                            ) { isDone ->
+                                Icon(
+                                    if (isDone) Icons.Outlined.Undo else Icons.Outlined.CheckCircle,
+                                    contentDescription = if (isDone) "恢复为未完成" else "标记完成",
+                                )
+                            }
                         }
                         IconButton(
                             onClick = { showTrashConfirm = true },
@@ -823,13 +949,29 @@ fun EditorScreen(
                             Icon(Icons.Outlined.DeleteOutline, contentDescription = "移入回收站")
                         }
                     }
+                    val saveInteraction = remember { MutableInteractionSource() }
                     FilledIconButton(
                         onClick = { runPublish(markCompleted = false) },
                         enabled = loaded && !publishing && !leaving && importing == 0,
-                        modifier = Modifier.padding(end = 12.dp).testTag("publish_homework"),
+                        interactionSource = saveInteraction,
+                        colors = if (saveReady) IconButtonDefaults.filledIconButtonColors()
+                        else IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                        modifier = Modifier
+                            .padding(end = 12.dp)
+                            .applePressScale(saveInteraction, 0.90f, loaded && !publishing && !leaving && importing == 0)
+                            .testTag("publish_homework"),
                     ) {
-                        if (publishing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Outlined.Save, contentDescription = "保存")
+                        AnimatedContent(
+                            targetState = publishing,
+                            transitionSpec = { TaskraMotion.iconSwapSpec(reduced) },
+                            label = "editorSaveIcon",
+                        ) { isPublishing ->
+                            if (isPublishing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Outlined.Save, contentDescription = "保存")
+                        }
                     }
                 },
             )
@@ -850,19 +992,42 @@ fun EditorScreen(
             )
         },
     ) { pad ->
-        if (!loaded) {
-            Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) { Text("加载中…") }
-            return@Scaffold
-        }
-        Column(Modifier.fillMaxSize().notebookPaper().padding(pad)) {
+        AnimatedContent(
+            targetState = loaded,
+            transitionSpec = { TaskraMotion.crossfadeSpec(reduced) },
+            modifier = Modifier.fillMaxSize().notebookPaper().padding(pad),
+            label = "editorLoaded",
+        ) { isLoaded ->
+            if (!isLoaded) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text("加载中…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else {
+        Column(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp).testTag("editor_metadata")) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) {
                         androidx.compose.material3.TextButton(onClick = { showCourseMenu = true }, enabled = templateCourseId == null, contentPadding = PaddingValues(0.dp)) {
                             Icon(Icons.Outlined.Book, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text(courseName, modifier = Modifier.weight(1f, fill = false), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            Icon(Icons.Outlined.KeyboardArrowDown, null, Modifier.size(18.dp))
+                            AnimatedContent(
+                                targetState = courseName,
+                                transitionSpec = { TaskraMotion.crossfadeSpec(reduced) },
+                                modifier = Modifier.weight(1f, fill = false),
+                                label = "editorCourseName",
+                            ) { name ->
+                                Text(name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            }
+                            Icon(
+                                Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .graphicsLayer { rotationZ = courseMenuArrowState.value },
+                            )
                         }
                         DropdownMenu(expanded = showCourseMenu, onDismissRequest = { showCourseMenu = false }) {
                             DropdownMenuItem(text = { Text("未分类") }, onClick = { courseId = null; showCourseMenu = false })
@@ -872,21 +1037,38 @@ fun EditorScreen(
                             DropdownMenuItem(text = { Text("新建课程") }, leadingIcon = { Icon(Icons.Outlined.Add, null) }, onClick = { showCourseMenu = false; showNewCourse = true })
                         }
                     }
+                    val deadlineLabel = if (templateCourseId != null) {
+                        if (deadlineDate == null) "每周截止" else "周" + listOf("一", "二", "三", "四", "五", "六", "日")[(deadlineDate!!.toInt() - 1).coerceIn(0, 6)] + (deadlineTime?.let { " $it" } ?: "")
+                    } else {
+                        TimeUtils.formatDeadlineShort(deadlineType, deadlineDate, deadlineTime, deadlineZone)
+                    }
+                    val deadlineInteraction = remember { MutableInteractionSource() }
                     androidx.compose.material3.FilledTonalButton(
-                        onClick = { showDeadline = true }, modifier = Modifier.testTag("deadline_button"),
+                        onClick = { showDeadline = true },
+                        interactionSource = deadlineInteraction,
+                        modifier = Modifier
+                            .applePressScale(deadlineInteraction, 0.94f)
+                            .appleContentSize()
+                            .testTag("deadline_button"),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     ) {
                         Icon(Icons.Outlined.Schedule, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(if (templateCourseId != null) {
-                            if (deadlineDate == null) "每周截止" else "周" + listOf("一", "二", "三", "四", "五", "六", "日")[(deadlineDate!!.toInt() - 1).coerceIn(0, 6)] + (deadlineTime?.let { " $it" } ?: "")
-                        } else if (deadlineType == DeadlineType.NONE) "截止时间" else
-                            (deadlineDate?.substringAfter("-")?.replace("-", "/") ?: "") +
-                                if (deadlineType == DeadlineType.DATETIME) " ${deadlineTime.orEmpty()}" else "", maxLines = 1)
+                        AnimatedContent(
+                            targetState = deadlineLabel,
+                            transitionSpec = { TaskraMotion.crossfadeSpec(reduced) },
+                            label = "editorDeadlineLabel",
+                        ) { label ->
+                            Text(label, maxLines = 1)
+                        }
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                Text("题目与要求", style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("editor_section").clickable { pendingFocusId = question.firstOrNull { it.kind == BlockKind.TEXT }?.id })
+                Text(
+                    if (templateCourseId != null) "模板内容" else "题目与要求",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.testTag("editor_section").clickable { pendingFocusId = question.firstOrNull { it.kind == BlockKind.TEXT }?.id },
+                )
             }
             LazyColumn(
                 state = documentState,
@@ -933,7 +1115,7 @@ fun EditorScreen(
                         decorationBox = { inner ->
                             if (tfv.text.isEmpty() && question.all { it.kind == BlockKind.TEXT && it.text.isBlank() } && block.id == question.first().id) {
                                 Text(
-                                    "写下题目…",
+                                    if (templateCourseId != null) "预设每次作业的通用内容…" else "写下题目…",
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                 )
@@ -942,30 +1124,60 @@ fun EditorScreen(
                         },
                     ) }
                 } else if (block.kind == BlockKind.AUDIO && block.audioId != null) {
-                    AudioAttachment(block.audioId, block.audioDurationMs, onRemove = { deleteAttachment(block.id) })
+                    Box(
+                        Modifier.animateItem(
+                            fadeInSpec = TaskraMotion.listFadeSpec(reduced),
+                            fadeOutSpec = TaskraMotion.listFadeSpec(reduced),
+                            placementSpec = TaskraMotion.listPlacementSpec(reduced),
+                        )
+                    ) {
+                        AudioAttachment(block.audioId, block.audioDurationMs, onRemove = { deleteAttachment(block.id) })
+                    }
                 } else {
                     val imgId = block.imageId
                     if (imgId != null) {
-                        Box(modifier = Modifier.fillMaxWidth()) {
+                        val imgInteraction = remember(imgId) { MutableInteractionSource() }
+                        val imgRequest = remember(imgId, reduced) {
+                            ImageRequest.Builder(context)
+                                .data(File(app.filesDir, "images/$imgId.jpg"))
+                                .crossfade(if (reduced) 0 else TaskraMotion.QuickMs)
+                                .build()
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .animateItem(
+                                    fadeInSpec = TaskraMotion.listFadeSpec(reduced),
+                                    fadeOutSpec = TaskraMotion.listFadeSpec(reduced),
+                                    placementSpec = TaskraMotion.listPlacementSpec(reduced),
+                                )
+                        ) {
                             val viewImage = onViewImage
                             AsyncImage(
-                                model = File(app.filesDir, "images/$imgId.jpg"),
+                                model = imgRequest,
                                 contentDescription = "作业图片",
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .then(
+                                        if (viewImage != null) Modifier.appleTactile(imgInteraction, pressedScale = 0.986f, cornerRadius = 8.dp)
+                                        else Modifier
+                                    )
                                     .clip(RoundedCornerShape(8.dp))
                                     .then(
-                                        if (viewImage != null) Modifier.clickable { viewImage(imgId) }
+                                        if (viewImage != null) Modifier.clickable(interactionSource = imgInteraction, indication = null) { viewImage(imgId) }
                                         else Modifier
                                     ),
                                 contentScale = ContentScale.FillWidth,
                             )
+                            val delInteraction = remember(block.id) { MutableInteractionSource() }
                             IconButton(
                                 onClick = { deleteAttachment(block.id) },
+                                interactionSource = delInteraction,
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
                                     .padding(4.dp)
                                     .size(40.dp)
+                                    .applePressScale(delInteraction, 0.86f)
                                     .clip(RoundedCornerShape(20.dp))
                                     .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f)),
                             ) {
@@ -980,7 +1192,24 @@ fun EditorScreen(
                     }
                 }
             }
-            if (importing > 0) item { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) }
+            item(key = "editor_importing") {
+                AnimatedVisibility(
+                    visible = importing > 0,
+                    enter = TaskraMotion.expandEnter(reduced),
+                    exit = TaskraMotion.collapseExit(reduced),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text("正在导入图片…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            }
+        }
             }
         }
     }
@@ -1000,69 +1229,175 @@ fun EditorScreen(
         }
     }
     if (recording) {
+        val pulse = if (!reduced) {
+            val infinite = rememberInfiniteTransition(label = "recPulse")
+            infinite.animateFloat(
+                initialValue = 0f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(tween(900, easing = TaskraMotion.Standard), RepeatMode.Reverse),
+                label = "recPulseValue",
+            ).value
+        } else 0.4f
+        val recColor = MaterialTheme.colorScheme.primary
         AlertDialog(
             onDismissRequest = { },
-            icon = { Icon(Icons.Outlined.GraphicEq, null, tint = MaterialTheme.colorScheme.primary) },
-            title = { Text(audioTime(recordingTime)) },
-            confirmButton = { IconButton(onClick = { finishRecording() }) { Icon(Icons.Outlined.Stop, "结束并插入录音") } },
-            dismissButton = { IconButton(onClick = { recorder.cancel(); recording = false; recordingTarget = null }) { Icon(Icons.Outlined.Close, "取消录音") } },
+            icon = {
+                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        val haloRadius = size.minDimension * (0.30f + 0.18f * pulse)
+                        drawCircle(recColor.copy(alpha = 0.16f + 0.14f * (1f - pulse)), radius = haloRadius)
+                        drawCircle(recColor, radius = 6.dp.toPx())
+                    }
+                }
+            },
+            title = {
+                Text(
+                    audioTime(recordingTime),
+                    style = MaterialTheme.typography.headlineSmall.copy(fontFeatureSettings = "tnum"),
+                )
+            },
+            confirmButton = {
+                FilledTonalButton(onClick = { finishRecording() }) {
+                    Icon(Icons.Outlined.Stop, "结束并插入录音", Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("完成")
+                }
+            },
+            dismissButton = {
+                AnimatedContent(
+                    targetState = confirmCancelRec,
+                    transitionSpec = { TaskraMotion.crossfadeSpec(reduced) },
+                    label = "recCancelConfirm",
+                ) { confirming ->
+                    if (confirming) {
+                        TextButton(
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            onClick = {
+                                confirmCancelRec = false
+                                recorder.cancel()
+                                recording = false
+                                recordingTarget = null
+                            },
+                        ) { Text("再按放弃") }
+                    } else {
+                        TextButton(
+                            onClick = {
+                                if (recordingTime >= 3000L) {
+                                    confirmCancelRec = true
+                                } else {
+                                    recorder.cancel()
+                                    recording = false
+                                    recordingTarget = null
+                                }
+                            },
+                        ) { Text("取消") }
+                    }
+                }
+            },
         )
     }
     if (showNewCourse) {
+        val courseFocus = remember { FocusRequester() }
+        var focusRequested by remember { mutableStateOf(false) }
+        fun dismissNewCourse() {
+            showNewCourse = false
+            newCourseName = ""
+            newCourseError = null
+        }
+        fun submitNewCourse() {
+            scope.launch {
+                val name = newCourseName.trim()
+                if (name.isEmpty()) {
+                    newCourseError = "请输入课程名"
+                    newCourseErrorShake++
+                    return@launch
+                }
+                val semId = ensureSemesterId()
+                if (semId == null) {
+                    snackbar.showSnackbar("课程准备失败，请重试")
+                    return@launch
+                }
+                val dup = app.repo.db.courseDao().listAll().firstOrNull { it.name == name }
+                if (dup?.deletedAt != null) {
+                    newCourseError = "回收站中有同名课程，请先恢复或彻底删除"
+                    newCourseErrorShake++
+                    return@launch
+                }
+                if (dup != null) {
+                    semesterId = dup.semesterId
+                    applyCourseTemplate(dup)
+                    snackbar.showSnackbar("已存在同名课程，已直接选用")
+                } else {
+                    val id = UUID.randomUUID().toString()
+                    app.repo.saveCourse(Course(id, semId, name, (0..7).random()))
+                    courseId = id
+                }
+                dismissNewCourse()
+            }
+        }
         AlertDialog(
-            onDismissRequest = { showNewCourse = false },
+            onDismissRequest = { dismissNewCourse() },
             title = { Text("新建课程") },
             text = {
-                OutlinedTextField(value = newCourseName, onValueChange = { newCourseName = it }, label = { Text("课程名") }, singleLine = true, modifier = Modifier.testTag("course_name_field"))
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        val name = newCourseName.trim()
-                        if (name.isEmpty()) return@launch
-                        val semId = ensureSemesterId()
-                        if (semId == null) {
-                            snackbar.showSnackbar("课程准备失败，请重试")
-                            return@launch
-                        }
-                        val dup = app.repo.db.courseDao().listAll().firstOrNull { it.name == name }
-                        if (dup?.deletedAt != null) {
-                            snackbar.showSnackbar("回收站中有同名课程，请先恢复或彻底删除")
-                            return@launch
-                        }
-                        if (dup != null) {
-                            semesterId = dup.semesterId
-                            applyCourseTemplate(dup)
-                            snackbar.showSnackbar("已存在同名课程，已直接选用")
-                        } else {
-                            val id = UUID.randomUUID().toString()
-                            app.repo.saveCourse(Course(id, semId, name, (0..7).random()))
-                            courseId = id
-                        }
-                        newCourseName = ""
-                        showNewCourse = false
+                Column(Modifier.appleContentSize()) {
+                    OutlinedTextField(
+                        value = newCourseName,
+                        onValueChange = { newCourseName = it; newCourseError = null },
+                        label = { Text("课程名") },
+                        singleLine = true,
+                        isError = newCourseError != null,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { submitNewCourse() }),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(courseFocus)
+                            .onGloballyPositioned {
+                                if (!focusRequested) {
+                                    focusRequested = true
+                                    courseFocus.requestFocus()
+                                }
+                            }
+                            .errorShake(newCourseErrorShake)
+                            .testTag("course_name_field"),
+                    )
+                    AnimatedVisibility(
+                        visible = newCourseError != null,
+                        enter = TaskraMotion.expandEnter(reduced),
+                        exit = TaskraMotion.collapseExit(reduced),
+                    ) {
+                        Text(
+                            newCourseError.orEmpty(),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
                     }
-                }) { Text("创建并选用") }
+                }
             },
-            dismissButton = { TextButton(onClick = { showNewCourse = false }) { Text("取消") } },
+            confirmButton = { TextButton(onClick = { submitNewCourse() }) { Text("创建并选用") } },
+            dismissButton = { TextButton(onClick = { dismissNewCourse() }) { Text("取消") } },
         )
     }
     if (showTrashConfirm && existingId != null) {
         AlertDialog(
             onDismissRequest = { showTrashConfirm = false },
             title = { Text("移入回收站？") },
+            text = { Text("移入回收站后不会立即删除，可在「设置 → 回收站」中随时恢复。") },
             confirmButton = {
-                TextButton(onClick = {
-                    showTrashConfirm = false
-                    scope.launch {
-                        try {
-                            app.repo.moveToTrash(existingId)
-                            postOnMain { onCancel() }
-                        } catch (_: Exception) {
-                            snackbar.showSnackbar("删除失败，请重试")
+                TextButton(
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    onClick = {
+                        showTrashConfirm = false
+                        scope.launch {
+                            try {
+                                app.repo.moveToTrash(existingId)
+                                postOnMain { onCancel() }
+                            } catch (_: Exception) {
+                                snackbar.showSnackbar("删除失败，请重试")
+                            }
                         }
-                    }
-                }) { Text("移入回收站") }
+                    },
+                ) { Text("移入回收站") }
             },
             dismissButton = { TextButton(onClick = { showTrashConfirm = false }) { Text("取消") } },
         )

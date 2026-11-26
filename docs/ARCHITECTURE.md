@@ -17,9 +17,10 @@ app/src/main/java/com/taskra/
   update/                GitHub Release 检查、SHA-256 流式校验下载与系统安装器调起（AppUpdater）
   util/                  时间工具（含可注入时钟）、排序、标题生成、富文本、编辑器文档、主线程投递
   ui/
-    AppViewModel.kt      全局偏好流、待办筛选状态、手动排序持久化、完成快照与软删除
+    AppViewModel.kt      全局偏好流、待办筛选状态、手动排序持久化、完成快照与可撤销软删除
+    motion/              统一动效系统（Motion.kt：曲线/弹簧、按压触感、LocalReduceMotion、滚动数字、错误微震）
     theme/               暖白方格纸与暖灰深色设计令牌（无动态取色）+ 霞鹜文楷字体
-    components/          方格纸背景、作业卡片、手势左滑、对钩+纸片消散、长按拖拽排序、录音与贴图组件
+    components/          离屏贴图方格纸、作业卡片、手势左滑、对钩+纸片消散、长按拖拽排序、录音与贴图组件
     screens/             Todo / Courses / CourseDetail / Editor / BlockView /
                          Settings / Trash / Drafts / ImageViewer（Review 仅保留历史兼容）
 ```
@@ -46,17 +47,18 @@ app/src/main/java/com/taskra/
 ## 3. 核心流程与组件机制
 
 ### 3.1 单文档原地编辑器与附件生命周期
-- **点开即编辑**：不设独立只读详情页与标题输入框，已有作业直接进入 `EditorScreen` 原地编辑（右上角提供保存、完成/恢复、移入回收站），正文首行自动生成列表摘要（历史作业标题保留）。输入暂停 500ms 防抖串行落盘草稿，顶部云朵图标仅作保存状态缩放反馈（不可点击）。正式保存前取消并等待防抖任务，在同一 Room 事务内写入作业、内容块并清理对应草稿。
+- **点开即编辑**：不设独立只读详情页与标题输入框，已有作业直接进入 `EditorScreen` 原地编辑（右上角提供保存、完成/恢复、移入回收站），正文首行自动生成列表摘要（历史作业标题保留）。输入暂停 500ms 防抖串行落盘草稿，空白新建作业离开时不写入空草稿并清理旧空草稿，顶部云朵图标仅作保存状态反馈（不可点击）。正式保存前取消并等待防抖任务，在同一 Room 事务内写入作业、内容块并清理对应草稿；空内容保存仅异步提示并聚焦输入区，不阻塞编辑。
 - **录音与图片**：
-  - `AudioRecorder.kt`：前台申请麦克风权限并录制临时文件，停止成功后转为 `filesDir/audio/<id>.m4a` 正式附件；切后台自动停止并插入，取消则清理临时文件。
+  - `AudioRecorder.kt`：前台申请麦克风权限并录制临时文件（满 3 秒取消需二次确认），停止成功后转为 `filesDir/audio/<id>.m4a` 正式附件，播放器显示当前/总时长并支持拖动跳转；切后台自动停止并插入，取消则清理临时文件。
   - `ImagePasteHost`（`ImagePaste.kt`）：包装系统文本粘贴菜单、`Ctrl+V` 与输入法 `commitContent`，显式粘贴后将图片导入 `filesDir/images/<id>.jpg`。
-- **重编辑与删除缝合**（`EditorDocument.kt`）：`editableDocument` 在加载纯图片/纯录音作业时自动补齐首尾可编辑文本位；`removeEditorAttachment` 删除附件时合并两侧文字并平移右侧富文本区间，保留用户输入的空格与换行。
+- **重编辑与删除缝合**（`EditorDocument.kt`）：`editableDocument` 在加载纯图片/纯录音作业时自动补齐首尾可编辑文本位；`removeEditorAttachment` 删除附件时合并两侧文字并平移右侧富文本区间，保留用户输入的空格与换行，同时通过 Snackbar 提供撤销恢复。
 
 ### 3.2 待办交互、手势左滑与拖拽排序
-- **待办完成与两段式消散**：点击手绘勾选框后由 `AppViewModel` 立即持久化 `DONE` 状态与 `completedAt`（离开页面不中断），`TodoScreen` 先播放约 320ms 方框画对钩动画，再播放 620ms `TileDismiss` 方块纸片消散动画（从作业编辑页点“完成”返回待办时，通过 `AppViewModel` 保存的卡片快照补播同一段对钩+消散动效），无撤销 Snackbar。
+- **待办完成与两段式消散**：点击手绘勾选框后由 `AppViewModel` 立即持久化 `DONE` 状态与 `completedAt`（离开页面不中断），`TodoScreen` 先播放约 320ms 方框画对钩动画，再播放 620ms `TileDismiss` 单次离屏采样纸片消散动画（从作业编辑页点“完成”返回待办时，通过 `AppViewModel` 保存的卡片快照补播同一段对钩+消散动效），无撤销 Snackbar。
+- **筛选胶囊与带课程新建**：待办与课程详情生效的筛选条件在列表顶部以可单项关闭的胶囊展示；按课程筛选待办时点击 `+` 新建作业自动带入当前课程并触发课程模板。截止时间统一经 `TimeUtils.formatDeadline` / `formatDeadlineShort` 相对化展示，弹窗提供智能去重快捷日期与快捷时刻。
 - **左滑回收站（`SwipeToTrash.kt`）**：
-  - 单条待办左滑移入回收站（写 `deletedAt`，不改 `TODO/DONE` 状态）。
-  - 课程左滑在单事务内将该课程及名下全部当前未删除的作业写入同一批次 `deletedAt` 时间戳；从回收站恢复课程时仅恢复同批次作业，不误恢复更早单独删除的作业。
+  - 待办与课程详情左滑移入回收站（写 `deletedAt`，不改 `TODO/DONE` 状态），并提供撤销 Snackbar；草稿箱右滑删除草稿同样支持撤销。
+  - 课程左滑在单事务内将该课程及名下全部当前未删除的作业写入同一批次 `deletedAt` 时间戳并提供撤销；从回收站恢复课程时仅恢复同批次作业，不误恢复更早单独删除的作业。回收站内作业卡片隐藏无效勾选框（`showCheck = false`），永久删除类操作统一使用错误红视觉警示与数量确认。
 - **长按拖拽排序（`DragOrder.kt`）**：
   - DataStore `listOrders` 独立保存 `todo`、`courses`、`course:<id>` 三处顺序；筛选状态下拖动仅替换可见项槽位，保留隐藏项位置。
   - 浮起卡片关闭列表 placement 动画，仅邻项使用弹簧让位；松手后在 220ms 内平滑落位，异步保存完成前保持本地顺序防回跳。

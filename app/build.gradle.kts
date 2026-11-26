@@ -35,7 +35,7 @@ val resolvedVersionName = rawVersionTag
     ?.removePrefix("v")
     ?.removePrefix("V")
     ?.ifBlank { null }
-    ?: "1.0.3"
+    ?: "1.0.4"
 val semverMatch = Regex("""^(\d+)\.(\d+)\.(\d+)""").find(resolvedVersionName)?.groupValues
 val resolvedVersionCode = if (semverMatch != null) {
     val major = semverMatch[1].toIntOrNull() ?: 1

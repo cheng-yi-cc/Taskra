@@ -14,33 +14,78 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -52,6 +97,9 @@ import androidx.navigation.navArgument
 import com.taskra.data.ThemeMode
 import com.taskra.ui.AppViewModel
 import com.taskra.ui.components.OpeningAnimation
+import com.taskra.ui.motion.LocalReduceMotion
+import com.taskra.ui.motion.TaskraMotion
+import com.taskra.ui.motion.applePressScale
 import com.taskra.ui.screens.CourseDetailScreen
 import com.taskra.ui.screens.CoursesScreen
 import com.taskra.ui.screens.DraftsScreen
@@ -195,92 +243,151 @@ class MainActivity : ComponentActivity() {
                     }
                     reminderHomeworkId = null
                 }
-                Box(Modifier.fillMaxSize()) {
-                Scaffold(
-                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
-                    bottomBar = {
-                        if (showBottom) {
-                            val navEdge = MaterialTheme.colorScheme.outlineVariant
-                            NavigationBar(
-                                modifier = Modifier.drawBehind {
-                                    drawLine(navEdge, Offset.Zero, Offset(size.width, 0f), 0.8.dp.toPx())
-                                },
-                                containerColor = MaterialTheme.colorScheme.background,
-                                tonalElevation = 0.dp,
-                            ) {
-                                NavigationBarItem(
-                                    alwaysShowLabel = false,
-                                    selected = route == "todo",
-                                    onClick = {
-                                        nav.navigate("todo") {
-                                            popUpTo("todo") { inclusive = false }
-                                            launchSingleTop = true
+                val reduced = LocalReduceMotion.current
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    // 平板宽屏：限制正文最大宽度并居中，同时裁剪页面滑动转场不溢出两侧留白。
+                    // 底部导航独立悬浮于底层外侧，仅做 graphicsLayer 纵向滑入滑出，彻底避免转场期间逐帧触发 Scaffold 重排。
+                    Box(
+                        Modifier
+                            .widthIn(max = 720.dp)
+                            .fillMaxSize()
+                            .align(Alignment.Center)
+                            .clipToBounds()
+                    ) {
+                        val rootContentModifier = Modifier
+                            .fillMaxSize()
+                            .navigationBarsPadding()
+                            .consumeWindowInsets(WindowInsets.navigationBars)
+                            .padding(bottom = 64.dp)
+                        NavHost(
+                            navController = nav,
+                            startDestination = "todo",
+                            enterTransition = {
+                                val from = initialState.destination.route
+                                val to = targetState.destination.route
+                                when {
+                                    reduced -> fadeIn(tween(TaskraMotion.ReducedFadeMs, easing = TaskraMotion.Decelerate))
+                                    isRootRoute(from) && isRootRoute(to) -> {
+                                        val dir = if (rootTabIndex(to) >= rootTabIndex(from)) 1 else -1
+                                        fadeIn(tween(170, easing = TaskraMotion.Decelerate)) +
+                                            slideInHorizontally(tween(TaskraMotion.StandardMs, easing = TaskraMotion.FluidOut)) {
+                                                (it * 0.04f * dir).toInt()
+                                            }
+                                    }
+                                    isModalRoute(to) -> {
+                                        slideInVertically(tween(TaskraMotion.ModalMs, easing = TaskraMotion.FluidOut)) {
+                                            (it * 0.07f).toInt()
+                                        } + fadeIn(tween(180, easing = TaskraMotion.Decelerate))
+                                    }
+                                    isViewerRoute(to) -> {
+                                        scaleIn(tween(240, easing = TaskraMotion.FluidOut), initialScale = 0.93f) +
+                                            fadeIn(tween(180, easing = TaskraMotion.Decelerate))
+                                    }
+                                    else -> {
+                                        // 不透明纯位移推入（对齐 iOS UINavigationController）：避免全屏 alpha saveLayer FBO 开销
+                                        slideInHorizontally(tween(TaskraMotion.PageMs, easing = TaskraMotion.FluidOut)) { it }
+                                    }
+                                }
+                            },
+                            exitTransition = {
+                                val from = initialState.destination.route
+                                val to = targetState.destination.route
+                                when {
+                                    reduced -> fadeOut(tween(TaskraMotion.ReducedFadeMs, easing = TaskraMotion.Standard))
+                                    isRootRoute(from) && isRootRoute(to) -> {
+                                        val dir = if (rootTabIndex(to) >= rootTabIndex(from)) 1 else -1
+                                        fadeOut(tween(130, easing = TaskraMotion.Standard)) +
+                                            slideOutHorizontally(tween(190, easing = TaskraMotion.FluidOut)) {
+                                                (-it * 0.04f * dir).toInt()
+                                            }
+                                    }
+                                    isModalRoute(to) -> {
+                                        scaleOut(tween(250, easing = TaskraMotion.FluidOut), targetScale = 0.978f)
+                                    }
+                                    isViewerRoute(to) -> {
+                                        fadeOut(tween(150, easing = TaskraMotion.Standard))
+                                    }
+                                    else -> {
+                                        slideOutHorizontally(tween(TaskraMotion.PageMs, easing = TaskraMotion.FluidOut)) {
+                                            -(it * 0.22f).toInt()
                                         }
-                                    },
-                                    modifier = Modifier.testTag("nav_todo"),
-                                    icon = { Icon(Icons.Outlined.CheckCircle, contentDescription = "待办") },
-                                    label = { Text("待办") },
-                                )
-                                NavigationBarItem(
-                                    alwaysShowLabel = false,
-                                    selected = route == "courses",
-                                    onClick = {
-                                        nav.navigate("courses") {
-                                            popUpTo("todo") { inclusive = false }
-                                            launchSingleTop = true
+                                    }
+                                }
+                            },
+                            popEnterTransition = {
+                                val from = initialState.destination.route
+                                val to = targetState.destination.route
+                                when {
+                                    reduced -> fadeIn(tween(TaskraMotion.ReducedFadeMs, easing = TaskraMotion.Decelerate))
+                                    isRootRoute(from) && isRootRoute(to) -> {
+                                        fadeIn(tween(170, easing = TaskraMotion.Decelerate))
+                                    }
+                                    isModalRoute(from) -> {
+                                        scaleIn(tween(240, easing = TaskraMotion.FluidOut), initialScale = 0.978f)
+                                    }
+                                    isViewerRoute(from) -> {
+                                        fadeIn(tween(170, easing = TaskraMotion.Decelerate))
+                                    }
+                                    else -> {
+                                        slideInHorizontally(tween(290, easing = TaskraMotion.FluidOut)) {
+                                            -(it * 0.22f).toInt()
                                         }
-                                    },
-                                    modifier = Modifier.testTag("nav_courses"),
-                                    icon = { Icon(Icons.Outlined.Book, contentDescription = "课程") },
-                                    label = { Text("课程") },
-                                )
-                                NavigationBarItem(
-                                    alwaysShowLabel = false,
-                                    selected = route == "settings",
-                                    onClick = {
-                                        nav.navigate("settings") {
-                                            popUpTo("todo") { inclusive = false }
-                                            launchSingleTop = true
-                                        }
-                                    },
-                                    modifier = Modifier.testTag("nav_settings"),
-                                    icon = { Icon(Icons.Outlined.Settings, contentDescription = "设置") },
-                                    label = { Text("设置") },
-                                )
-                            }
-                        }
-                    },
-                ) { pad ->
-                    Box(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad)) {
-                        // 平板宽屏：限制正文最大宽度并居中；手机单列不受影响
-                        Box(
-                            Modifier
-                                .widthIn(max = 720.dp)
-                                .fillMaxSize()
-                                .align(Alignment.Center)
+                                    }
+                                }
+                            },
+                            popExitTransition = {
+                                val from = initialState.destination.route
+                                val to = targetState.destination.route
+                                when {
+                                    reduced -> fadeOut(tween(TaskraMotion.ReducedFadeMs, easing = TaskraMotion.Standard))
+                                    isRootRoute(from) && isRootRoute(to) -> {
+                                        fadeOut(tween(130, easing = TaskraMotion.Standard))
+                                    }
+                                    isModalRoute(from) -> {
+                                        slideOutVertically(tween(220, easing = TaskraMotion.FluidOut)) {
+                                            (it * 0.08f).toInt()
+                                        } + fadeOut(tween(160, easing = TaskraMotion.Standard))
+                                    }
+                                    isViewerRoute(from) -> {
+                                        scaleOut(tween(200, easing = TaskraMotion.FluidOut), targetScale = 0.93f) +
+                                            fadeOut(tween(150, easing = TaskraMotion.Standard))
+                                    }
+                                    else -> {
+                                        slideOutHorizontally(tween(290, easing = TaskraMotion.FluidOut)) { it }
+                                    }
+                                }
+                            },
                         ) {
-                        NavHost(navController = nav, startDestination = "todo") {
                             composable("todo") {
-                                TodoScreen(
-                                    app = app, vm = vm,
-                                    onOpenHomework = { nav.navigate("homework/$it") },
-                                    onNewHomework = { nav.navigate("editor/new") },
-                                    onOpenDrafts = { nav.navigate("drafts") },
-                                )
+                                Box(rootContentModifier) {
+                                    TodoScreen(
+                                        app = app, vm = vm,
+                                        onOpenHomework = { nav.navigate("homework/$it") },
+                                        onNewHomework = { courseId ->
+                                            if (courseId.isNullOrBlank()) nav.navigate("editor/new")
+                                            else nav.navigate("editor/new?semesterId=&courseId=${Uri.encode(courseId)}")
+                                        },
+                                        onOpenDrafts = { nav.navigate("drafts") },
+                                    )
+                                }
                             }
                             composable("courses") {
-                                CoursesScreen(
-                                    app = app, vm = vm,
-                                    onOpenCourse = { nav.navigate("course/$it") },
-                                    onOpenHomework = { nav.navigate("homework/$it") },
-                                    onOpenUncat = { nav.navigate("uncat/$it") },
-                                )
+                                Box(rootContentModifier) {
+                                    CoursesScreen(
+                                        app = app, vm = vm,
+                                        onOpenCourse = { nav.navigate("course/$it") },
+                                        onOpenHomework = { nav.navigate("homework/$it") },
+                                        onOpenUncat = { nav.navigate("uncat/$it") },
+                                    )
+                                }
                             }
                             composable("settings") {
-                                SettingsScreen(
-                                    app = app, vm = vm,
-                                    onOpenTrash = { nav.navigate("trash") },
-                                )
+                                Box(rootContentModifier) {
+                                    SettingsScreen(
+                                        app = app, vm = vm,
+                                        onOpenTrash = { nav.navigate("trash") },
+                                    )
+                                }
                             }
                             composable(
                                 "course/{courseId}",
@@ -414,10 +521,193 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                    }
+                    AnimatedVisibility(
+                        visible = showBottom,
+                        enter = if (reduced) fadeIn(tween(TaskraMotion.ReducedFadeMs))
+                        else slideInVertically(tween(TaskraMotion.StandardMs, easing = TaskraMotion.FluidOut)) { it },
+                        exit = if (reduced) fadeOut(tween(TaskraMotion.ReducedFadeMs))
+                        else slideOutVertically(tween(190, easing = TaskraMotion.Standard)) { it },
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                    ) {
+                        TaskraBottomBar(
+                            currentRoute = route,
+                            onSelect = { target ->
+                                nav.navigate(target) {
+                                    popUpTo("todo") { inclusive = false }
+                                    launchSingleTop = true
+                                }
+                            },
+                        )
+                    }
+                    if (showOpening) OpeningAnimation(onFinished = { showOpening = false })
+                }
+            }
+        }
+    }
+}
+
+private val RootTabOrder = mapOf("todo" to 0, "courses" to 1, "settings" to 2)
+private fun isRootRoute(route: String?): Boolean = route in RootTabOrder
+private fun rootTabIndex(route: String?): Int = RootTabOrder[route] ?: 0
+private fun isModalRoute(route: String?): Boolean =
+    route != null && (route.startsWith("editor/new") || route.startsWith("editor/draft"))
+private fun isViewerRoute(route: String?): Boolean =
+    route != null && route.startsWith("viewer/")
+
+private data class BottomTabSpec(
+    val route: String,
+    val label: String,
+    val tag: String,
+    val outlined: ImageVector,
+    val filled: ImageVector,
+)
+
+private val BottomTabs = listOf(
+    BottomTabSpec("todo", "待办", "nav_todo", Icons.Outlined.CheckCircle, Icons.Filled.CheckCircle),
+    BottomTabSpec("courses", "课程", "nav_courses", Icons.Outlined.Book, Icons.Filled.Book),
+    BottomTabSpec("settings", "设置", "nav_settings", Icons.Outlined.Settings, Icons.Filled.Settings),
+)
+
+/**
+ * 轻量流体底部导航：选中背景胶囊沿水平弹簧平滑滑行，图标随选中态在空心/实心间轻弹切换。
+ * 平板宽屏居中对齐 720dp 内容栏，窄屏等分三槽不裁切。
+ */
+@Composable
+private fun TaskraBottomBar(
+    currentRoute: String,
+    onSelect: (String) -> Unit,
+) {
+    val reduced = LocalReduceMotion.current
+    val haptic = LocalHapticFeedback.current
+    val navEdge = MaterialTheme.colorScheme.outlineVariant
+    val activeIdx = (BottomTabs.indexOfFirst { it.route == currentRoute }).coerceAtLeast(0)
+    val indicatorIndexState = animateFloatAsState(
+        targetValue = activeIdx.toFloat(),
+        animationSpec = if (reduced) tween(0) else TaskraMotion.spatialSpring(),
+        label = "bottomBarPill",
+    )
+
+    Surface(
+        color = MaterialTheme.colorScheme.background,
+        tonalElevation = 0.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                drawLine(navEdge, Offset.Zero, Offset(size.width, 0f), 0.8.dp.toPx())
+            },
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .height(64.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .widthIn(max = 720.dp)
+                    .fillMaxWidth()
+                    .fillMaxHeight(),
+            ) {
+                val tabWidth = maxWidth / BottomTabs.size
+                val pillWidth = (tabWidth * 0.66f).coerceIn(64.dp, 108.dp)
+                val pillInset = (tabWidth - pillWidth) / 2f
+                // 滑动选中胶囊：纯 graphicsLayer 水平平移，零重组，随时可打断换向。
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .graphicsLayer {
+                            translationX = (indicatorIndexState.value * tabWidth.toPx()) + pillInset.toPx()
+                        }
+                        .width(pillWidth)
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)),
+                )
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BottomTabs.forEach { tab ->
+                        val isSelected = tab.route == currentRoute
+                        val interaction = remember { MutableInteractionSource() }
+                        val tint by animateColorAsState(
+                            targetValue = if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            animationSpec = TaskraMotion.colorSpec(reduced, TaskraMotion.QuickMs),
+                            label = "navTint_${tab.route}",
+                        )
+                        val popScale = remember { Animatable(1f) }
+                        LaunchedEffect(isSelected) {
+                            if (isSelected && !reduced) {
+                                popScale.snapTo(0.88f)
+                                popScale.animateTo(1f, TaskraMotion.tactileSpring())
+                            } else {
+                                popScale.snapTo(1f)
+                            }
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .testTag(tab.tag)
+                                .semantics { selected = isSelected }
+                                .applePressScale(interaction, pressedScale = 0.93f)
+                                .clickable(
+                                    interactionSource = interaction,
+                                    indication = null,
+                                    role = Role.Tab,
+                                    onClick = {
+                                        if (!isSelected) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onSelect(tab.route)
+                                        }
+                                    },
+                                ),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .graphicsLayer {
+                                        val s = popScale.value
+                                        scaleX = s
+                                        scaleY = s
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                AnimatedContent(
+                                    targetState = isSelected,
+                                    transitionSpec = { TaskraMotion.iconSwapSpec(reduced) },
+                                    label = "navIcon_${tab.route}",
+                                ) { active ->
+                                    Icon(
+                                        imageVector = if (active) tab.filled else tab.outlined,
+                                        contentDescription = tab.label,
+                                        tint = tint,
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                }
+                            }
+                            AnimatedVisibility(
+                                visible = isSelected,
+                                enter = if (reduced) fadeIn(tween(TaskraMotion.ReducedFadeMs))
+                                else fadeIn(tween(140, easing = TaskraMotion.Decelerate)) +
+                                    expandVertically(TaskraMotion.spatialSpring(), expandFrom = Alignment.Top),
+                                exit = if (reduced) fadeOut(tween(TaskraMotion.ReducedFadeMs))
+                                else fadeOut(tween(100, easing = TaskraMotion.Standard)) +
+                                    shrinkVertically(TaskraMotion.spatialSpring(), shrinkTowards = Alignment.Top),
+                            ) {
+                                Text(
+                                    text = tab.label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = tint,
+                                )
+                            }
                         }
                     }
-                }
-                if (showOpening) OpeningAnimation(onFinished = { showOpening = false })
                 }
             }
         }

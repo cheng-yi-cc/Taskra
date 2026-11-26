@@ -1,7 +1,6 @@
 package com.taskra.ui.components
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -24,47 +23,78 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.taskra.ui.motion.LocalReduceMotion
+import com.taskra.ui.motion.TaskraMotion
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.sin
 
 /**
- * 开屏手写动画（仅在进程首次进入时播放，点击任意处可跳过）：
+ * 开屏手写动画（仅在进程首次进入时播放，点击任意处可柔和淡出跳过）：
  * 钢笔随手腕倾角灵动摆动，一气呵成写出带有起笔顿锋、行笔抑扬粗细变化与尾端出锋的流畅游丝曲线，
  * 「课迹 / TASKRA」随运笔节奏渐次浮现。
+ * 尊重系统“减少动态效果”：关闭动画时仅做极短柔和淡出，避免多余动态。
  */
 @Composable
 fun OpeningAnimation(onFinished: () -> Unit) {
-    val progress = remember { Animatable(0f) }
+    val reduced = LocalReduceMotion.current
+    val progress = remember { Animatable(if (reduced) 0.78f else 0f) }
+    val skipFade = remember { Animatable(1f) }
+    var dismissing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val finished by rememberUpdatedState(onFinished)
-    LaunchedEffect(Unit) {
-        progress.animateTo(1f, tween(1650, easing = LinearEasing))
-        finished()
+
+    fun dismissSmoothly() {
+        if (dismissing) return
+        dismissing = true
+        scope.launch {
+            skipFade.animateTo(0f, tween(140, easing = TaskraMotion.Standard))
+            finished()
+        }
     }
-    val p = progress.value
+
+    LaunchedEffect(reduced) {
+        if (reduced) {
+            skipFade.animateTo(0f, tween(160, easing = TaskraMotion.Standard))
+            finished()
+        } else {
+            progress.animateTo(1f, tween(1550, easing = LinearEasing))
+            if (!dismissing) finished()
+        }
+    }
+
     val ink = MaterialTheme.colorScheme.onBackground
     val inkSoft = MaterialTheme.colorScheme.onSurfaceVariant
     val red = MaterialTheme.colorScheme.primary
     val paper = MaterialTheme.colorScheme.background
 
-    // 阶段划分：0.05..0.76 一气呵成书写流畅游丝曲线，0.76..0.85 收笔轻提，0.86..1.00 整体淡出
-    val rawFlourish = ((p - 0.05f) / 0.71f).coerceIn(0f, 1f)
-    val flourish = FastOutSlowInEasing.transform(rawFlourish)
-    val titleReveal = FastOutSlowInEasing.transform(((p - 0.12f) / 0.50f).coerceIn(0f, 1f))
-    val subtitleReveal = FastOutSlowInEasing.transform(((p - 0.36f) / 0.42f).coerceIn(0f, 1f))
-    val opacity = 1f - ((p - 0.86f) / 0.14f).coerceIn(0f, 1f)
+    // 预构建钢笔矢量 Path，避免 60/120fps 绘制期间每帧分配内存
+    val penPaths = remember { PenPaths() }
 
     Box(
         Modifier
             .fillMaxSize()
             .testTag("opening_animation")
-            .graphicsLayer { alpha = opacity }
+            .graphicsLayer {
+                val p = progress.value
+                val naturalAlpha = 1f - TaskraMotion.Standard.transform(((p - 0.85f) / 0.15f).coerceIn(0f, 1f))
+                alpha = naturalAlpha * skipFade.value
+                if (!reduced) {
+                    val exitZoom = 1f + (1f - naturalAlpha) * 0.025f
+                    scaleX = exitZoom
+                    scaleY = exitZoom
+                }
+            }
             .notebookPaper()
-            .pointerInput(Unit) { detectTapGestures { finished() } },
+            .pointerInput(Unit) { detectTapGestures { dismissSmoothly() } },
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Canvas(Modifier.size(width = 268.dp, height = 164.dp)) {
+                val p = progress.value
+                val rawFlourish = ((p - 0.04f) / 0.72f).coerceIn(0f, 1f)
+                val flourish = TaskraMotion.FluidOut.transform(rawFlourish)
                 withTransform({ scale(size.width / 268f, size.height / 164f, pivot = Offset.Zero) }) {
                     // 1. 绘制一气呵成的书法游丝曲线（带起笔顿锋、中段抑扬与尾端出锋的压感粗细变化）
                     val steps = 72
@@ -106,7 +136,7 @@ fun OpeningAnimation(onFinished: () -> Unit) {
                     val pA = flourishPoint((flourish - dt).coerceAtLeast(0f))
                     val pB = flourishPoint((flourish + dt).coerceAtMost(1f))
                     val slopeDeg = atan2(pB.y - pA.y, (pB.x - pA.x).coerceAtLeast(0.1f)) * (180f / PI.toFloat())
-                    val settle = ((p - 0.76f) / 0.10f).coerceIn(0f, 1f)
+                    val settle = TaskraMotion.FluidOut.transform(((p - 0.75f) / 0.11f).coerceIn(0f, 1f))
                     val penPos = Offset(
                         x = headPoint.x + settle * 4.5f,
                         y = headPoint.y - settle * 6.5f,
@@ -115,6 +145,7 @@ fun OpeningAnimation(onFinished: () -> Unit) {
                     val penAngle = 31f + (slopeDeg * 0.28f).coerceIn(-9f, 9f) - settle * 5f
 
                     drawFountainPen(
+                        paths = penPaths,
                         tip = penPos,
                         angleDeg = penAngle,
                         ink = ink,
@@ -128,6 +159,7 @@ fun OpeningAnimation(onFinished: () -> Unit) {
                 style = MaterialTheme.typography.headlineLarge.copy(fontSize = 38.sp),
                 color = ink,
                 modifier = Modifier.graphicsLayer {
+                    val titleReveal = if (reduced) 1f else TaskraMotion.FluidOut.transform(((progress.value - 0.12f) / 0.48f).coerceIn(0f, 1f))
                     alpha = titleReveal
                     translationY = (1f - titleReveal) * 14f
                 },
@@ -138,6 +170,7 @@ fun OpeningAnimation(onFinished: () -> Unit) {
                 style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 2.4.sp),
                 color = inkSoft,
                 modifier = Modifier.graphicsLayer {
+                    val subtitleReveal = if (reduced) 1f else TaskraMotion.FluidOut.transform(((progress.value - 0.34f) / 0.40f).coerceIn(0f, 1f))
                     alpha = subtitleReveal
                     translationY = (1f - subtitleReveal) * 8f
                 },
@@ -145,6 +178,27 @@ fun OpeningAnimation(onFinished: () -> Unit) {
             Spacer(Modifier.height(52.dp))
         }
     }
+}
+
+private class PenPaths {
+    val barrel = Path().apply {
+        moveTo(-4.6f, -23f)
+        lineTo(-5.4f, -68f)
+        quadraticTo(-5.4f, -74f, 0f, -74f)
+        quadraticTo(5.4f, -74f, 5.4f, -68f)
+        lineTo(4.6f, -23f)
+        close()
+    }
+    val nib = Path().apply {
+        moveTo(0f, 0f)
+        cubicTo(-1.9f, -5f, -6.5f, -11.2f, -6.5f, -16.2f)
+        lineTo(-4.6f, -23f)
+        lineTo(4.6f, -23f)
+        lineTo(6.5f, -16.2f)
+        cubicTo(6.5f, -11.2f, 1.9f, -5f, 0f, 0f)
+        close()
+    }
+    val nibStroke = Stroke(1.4f, join = StrokeJoin.Round)
 }
 
 /**
@@ -198,6 +252,7 @@ private fun cubicBezier(p0: Offset, p1: Offset, p2: Offset, p3: Offset, t: Float
 }
 
 private fun DrawScope.drawFountainPen(
+    paths: PenPaths,
     tip: Offset,
     angleDeg: Float,
     ink: androidx.compose.ui.graphics.Color,
@@ -208,16 +263,7 @@ private fun DrawScope.drawFountainPen(
         translate(tip.x, tip.y)
         rotate(angleDeg, Offset.Zero)
     }) {
-        // 笔握与笔杆（修长圆润的复古钢笔轮廓）
-        val barrel = Path().apply {
-            moveTo(-4.6f, -23f)
-            lineTo(-5.4f, -68f)
-            quadraticTo(-5.4f, -74f, 0f, -74f)
-            quadraticTo(5.4f, -74f, 5.4f, -68f)
-            lineTo(4.6f, -23f)
-            close()
-        }
-        drawPath(barrel, ink)
+        drawPath(paths.barrel, ink)
         // 笔夹细线
         drawLine(
             color = paper.copy(alpha = 0.65f),
@@ -230,17 +276,8 @@ private fun DrawScope.drawFountainPen(
         drawLine(red, Offset(-4.8f, -27.5f), Offset(4.8f, -27.5f), 2.6f)
 
         // 钢笔尖（五角翼面 + 呼吸孔 + 中缝）
-        val nib = Path().apply {
-            moveTo(0f, 0f)
-            cubicTo(-1.9f, -5f, -6.5f, -11.2f, -6.5f, -16.2f)
-            lineTo(-4.6f, -23f)
-            lineTo(4.6f, -23f)
-            lineTo(6.5f, -16.2f)
-            cubicTo(6.5f, -11.2f, 1.9f, -5f, 0f, 0f)
-            close()
-        }
-        drawPath(nib, paper)
-        drawPath(nib, ink, style = Stroke(1.4f, join = StrokeJoin.Round))
+        drawPath(paths.nib, paper)
+        drawPath(paths.nib, ink, style = paths.nibStroke)
         drawLine(ink, Offset(0f, -1.5f), Offset(0f, -13.5f), 1.05f, cap = StrokeCap.Round)
         drawCircle(ink, 1.55f, Offset(0f, -15.2f))
         // 笔尖沾染的墨点

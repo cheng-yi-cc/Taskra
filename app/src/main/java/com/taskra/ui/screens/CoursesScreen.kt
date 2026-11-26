@@ -1,8 +1,10 @@
 package com.taskra.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.AlertDialog
@@ -27,14 +31,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -43,10 +50,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.taskra.TaskraApp
@@ -59,6 +70,12 @@ import com.taskra.ui.components.SwipeToTrash
 import com.taskra.ui.components.notebookPaper
 import com.taskra.ui.components.rememberDragOrder
 import com.taskra.ui.components.reorderItemModifier
+import com.taskra.ui.motion.LocalReduceMotion
+import com.taskra.ui.motion.RollingCountText
+import com.taskra.ui.motion.TaskraMotion
+import com.taskra.ui.motion.appleContentSize
+import com.taskra.ui.motion.appleTactile
+import com.taskra.ui.motion.errorShake
 import com.taskra.ui.theme.NotebookHand
 import com.taskra.ui.theme.courseColor
 import com.taskra.util.ordered
@@ -79,10 +96,12 @@ fun CoursesScreen(
     val prefs by vm.prefs.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val reduced = LocalReduceMotion.current
     var swipeReset by remember { mutableStateOf(0) }
     var showNewCourse by remember { mutableStateOf(false) }
     var newCourseName by remember { mutableStateOf("") }
     var newCourseError by remember { mutableStateOf<String?>(null) }
+    var newCourseErrorShake by remember { mutableIntStateOf(0) }
     // 默认学期：当前学期偏好 → 第一个未归档 → 第一个
     val defaultSem = remember(semesters, prefs.currentSemesterId) {
         semesters.find { it.id == prefs.currentSemesterId }
@@ -122,13 +141,20 @@ fun CoursesScreen(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp, 16.dp, 24.dp, 96.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
+            item(key = "courses_header") {
                 com.taskra.ui.components.NotebookHeading("课程")
                 Spacer(Modifier.height(4.dp))
             }
             if (displayedCourses.isEmpty()) {
-                item {
-                    NotebookEmpty("暂无课程")
+                item(key = "courses_empty") {
+                    NotebookEmpty(
+                        "暂无课程",
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = TaskraMotion.listFadeSpec(reduced),
+                            fadeOutSpec = TaskraMotion.listFadeSpec(reduced),
+                            placementSpec = TaskraMotion.listPlacementSpec(reduced),
+                        ),
+                    )
                 }
             }
             items(displayedCourses, key = { it.id }) { c ->
@@ -136,59 +162,116 @@ fun CoursesScreen(
                     enabled = drag.dragging == null,
                     modifier = reorderItemModifier(drag, c.id).testTag("swipe_course:${c.id}"),
                     resetKey = swipeReset,
-                    onDelete = { vm.trashCourse(c.id) { swipeReset++; scope.launch { snackbar.showSnackbar("删除失败，请重试") } } },
+                    onDelete = {
+                        vm.trashCourse(
+                            id = c.id,
+                            onSuccess = {
+                                scope.launch {
+                                    snackbar.currentSnackbarData?.dismiss()
+                                    val res = snackbar.showSnackbar(
+                                        message = "已将「${c.name}」移入回收站",
+                                        actionLabel = "撤销",
+                                        duration = SnackbarDuration.Short,
+                                    )
+                                    if (res == SnackbarResult.ActionPerformed) {
+                                        vm.restoreCourse(c.id) {
+                                            scope.launch { snackbar.showSnackbar("恢复失败，请重试") }
+                                        }
+                                        swipeReset++
+                                    }
+                                }
+                            },
+                            onFailure = { swipeReset++; scope.launch { snackbar.showSnackbar("删除失败，请重试") } },
+                        )
+                    },
                 ) { CourseCard(app, c, onOpen = { onOpenCourse(c.id) }) }
             }
-            item {
+            item(key = "courses_uncat") {
                 // 未分类（按学期归属）
                 if (selectedSemId != null) {
-                    UncatCard(app, selectedSemId!!, onOpenHomework, onOpenUncat)
+                    UncatCard(
+                        app, selectedSemId!!, onOpenHomework, onOpenUncat,
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = TaskraMotion.listFadeSpec(reduced),
+                            fadeOutSpec = TaskraMotion.listFadeSpec(reduced),
+                            placementSpec = TaskraMotion.listPlacementSpec(reduced),
+                        ),
+                    )
                 }
             }
         }
     }
 
     if (showNewCourse) {
+        val courseFocus = remember { FocusRequester() }
+        var focusRequested by remember { mutableStateOf(false) }
+        fun dismissNewCourse() {
+            showNewCourse = false
+            newCourseName = ""
+            newCourseError = null
+        }
+        fun submitNewCourse() {
+            val name = newCourseName.trim()
+            val semId = selectedSemId ?: return
+            scope.launch {
+                if (name.isEmpty()) {
+                    newCourseError = "请输入课程名"
+                    newCourseErrorShake++
+                    return@launch
+                }
+                val dup = app.repo.db.courseDao().listAll().firstOrNull { it.name == name }
+                if (dup != null) {
+                    newCourseError = if (dup.deletedAt != null) "回收站中有同名课程，请先恢复或彻底删除" else "已存在同名课程「$name」"
+                    newCourseErrorShake++
+                    return@launch
+                }
+                app.repo.saveCourse(
+                    Course(UUID.randomUUID().toString(), semId, name, (0..7).random())
+                )
+                dismissNewCourse()
+            }
+        }
         AlertDialog(
-            onDismissRequest = { showNewCourse = false; newCourseError = null },
+            onDismissRequest = { dismissNewCourse() },
             title = { Text("新建课程") },
             text = {
-                Column {
+                Column(Modifier.appleContentSize()) {
                     OutlinedTextField(
                         value = newCourseName,
                         onValueChange = { newCourseName = it; newCourseError = null },
                         label = { Text("课程名") },
                         singleLine = true,
-                        modifier = Modifier.testTag("course_name_field"),
+                        isError = newCourseError != null,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { submitNewCourse() }),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(courseFocus)
+                            .onGloballyPositioned {
+                                if (!focusRequested) {
+                                    focusRequested = true
+                                    courseFocus.requestFocus()
+                                }
+                            }
+                            .errorShake(newCourseErrorShake)
+                            .testTag("course_name_field"),
                     )
-                    if (newCourseError != null) {
-                        Text(newCourseError!!, color = MaterialTheme.colorScheme.error)
+                    AnimatedVisibility(
+                        visible = newCourseError != null,
+                        enter = TaskraMotion.expandEnter(reduced),
+                        exit = TaskraMotion.collapseExit(reduced),
+                    ) {
+                        Text(
+                            newCourseError.orEmpty(),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    val name = newCourseName.trim()
-                    val semId = selectedSemId ?: return@TextButton
-                    scope.launch {
-                        if (name.isEmpty()) {
-                            newCourseError = "请输入课程名"
-                            return@launch
-                        }
-                        val dup = app.repo.db.courseDao().listAll().firstOrNull { it.name == name }
-                        if (dup != null) {
-                            newCourseError = if (dup.deletedAt != null) "回收站中有同名课程，请先恢复或彻底删除" else "已存在同名课程「$name」"
-                            return@launch
-                        }
-                        app.repo.saveCourse(
-                            Course(UUID.randomUUID().toString(), semId, name, (0..7).random())
-                        )
-                        newCourseName = ""
-                        showNewCourse = false
-                    }
-                }) { Text("创建") }
-            },
-            dismissButton = { TextButton(onClick = { showNewCourse = false }) { Text("取消") } },
+            confirmButton = { TextButton(onClick = { submitNewCourse() }) { Text("创建") } },
+            dismissButton = { TextButton(onClick = { dismissNewCourse() }) { Text("取消") } },
         )
     }
 }
@@ -209,9 +292,13 @@ private fun CourseCard(app: TaskraApp, c: Course, onOpen: () -> Unit) {
     val marker = courseColor(c.colorIndex)
     val isDark = MaterialTheme.colorScheme.surface.luminance() < .5f
     val markerText = lerp(marker, MaterialTheme.colorScheme.onSurface, if (isDark) .38f else .24f)
+    val interaction = remember { MutableInteractionSource() }
 
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        modifier = Modifier
+            .fillMaxWidth()
+            .appleTactile(interaction, pressedScale = 0.982f, cornerRadius = 5.dp)
+            .clickable(interactionSource = interaction, indication = null, onClick = onOpen),
         shape = RoundedCornerShape(5.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
         border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -250,11 +337,33 @@ private fun CourseCard(app: TaskraApp, c: Course, onOpen: () -> Unit) {
                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = NotebookHand, fontSize = 19.sp),
                 )
                 Spacer(Modifier.height(2.dp))
-                Text(
-                    "$undone 项待办 · $done 项完成" + if (!c.isActive) " · 已停用" else "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                val subStyle = MaterialTheme.typography.bodyMedium
+                val subColor = MaterialTheme.colorScheme.onSurfaceVariant
+                val extraSuffix = buildString {
+                    if (!c.templateJson.isNullOrBlank()) append(" · 模板")
+                    if (!c.isActive) append(" · 已停用")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    when {
+                        total == 0 -> {
+                            Text("暂无作业$extraSuffix", style = subStyle, color = subColor)
+                        }
+                        done == 0 -> {
+                            RollingCountText(undone, style = subStyle, color = subColor)
+                            Text(" 项待办$extraSuffix", style = subStyle, color = subColor)
+                        }
+                        undone == 0 -> {
+                            RollingCountText(done, style = subStyle, color = subColor)
+                            Text(" 项已完成$extraSuffix", style = subStyle, color = subColor)
+                        }
+                        else -> {
+                            RollingCountText(undone, style = subStyle, color = subColor)
+                            Text(" 项待办 · ", style = subStyle, color = subColor)
+                            RollingCountText(done, style = subStyle, color = subColor)
+                            Text(" 项完成$extraSuffix", style = subStyle, color = subColor)
+                        }
+                    }
+                }
             }
             Icon(
                 Icons.Outlined.ChevronRight,
@@ -267,26 +376,46 @@ private fun CourseCard(app: TaskraApp, c: Course, onOpen: () -> Unit) {
 }
 
 @Composable
-private fun UncatCard(app: TaskraApp, semesterId: String, onOpenHomework: (String) -> Unit, onOpenUncat: (String) -> Unit) {
+private fun UncatCard(
+    app: TaskraApp,
+    semesterId: String,
+    onOpenHomework: (String) -> Unit,
+    onOpenUncat: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val reduced = LocalReduceMotion.current
     val uncat by app.repo.db.homeworkDao().observeUncatAll().collectAsState(initial = emptyList())
-    if (uncat.isEmpty()) return
-    Surface(
-        modifier = Modifier.fillMaxWidth().clickable { onOpenUncat(semesterId) },
-        shape = RoundedCornerShape(5.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
+    val interaction = remember { MutableInteractionSource() }
+    AnimatedVisibility(
+        visible = uncat.isNotEmpty(),
+        enter = TaskraMotion.expandEnter(reduced),
+        exit = TaskraMotion.collapseExit(reduced),
+        modifier = modifier,
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text("未分类", style = MaterialTheme.typography.titleMedium.copy(fontFamily = NotebookHand, fontSize = 19.sp))
-            Text("${uncat.size} 项作业", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            uncat.take(3).forEach { h ->
-                Text(
-                    "· ${h.title.ifBlank { "未命名作业" }}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable { onOpenHomework(h.id) }.padding(vertical = 4.dp),
-                )
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .appleTactile(interaction, pressedScale = 0.982f, cornerRadius = 5.dp)
+                .clickable(interactionSource = interaction, indication = null) { onOpenUncat(semesterId) },
+            shape = RoundedCornerShape(5.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column(Modifier.padding(16.dp).appleContentSize()) {
+                Text("未分类", style = MaterialTheme.typography.titleMedium.copy(fontFamily = NotebookHand, fontSize = 19.sp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RollingCountText(uncat.size, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(" 项作业", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.height(8.dp))
+                uncat.take(3).forEach { h ->
+                    Text(
+                        "· ${h.title.ifBlank { "未命名作业" }}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { onOpenHomework(h.id) }.padding(vertical = 4.dp),
+                    )
+                }
             }
         }
     }

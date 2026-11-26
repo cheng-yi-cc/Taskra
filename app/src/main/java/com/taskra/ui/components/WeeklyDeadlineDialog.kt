@@ -1,5 +1,6 @@
 package com.taskra.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -8,29 +9,45 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.taskra.ui.motion.LocalReduceMotion
+import com.taskra.ui.motion.TaskraMotion
+import com.taskra.ui.motion.appleContentSize
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun WeeklyDeadlineDialog(day: Int?, time: String?, onDismiss: () -> Unit, onApply: (Int?, String?) -> Unit) {
+    val reduced = LocalReduceMotion.current
     var selected by remember { mutableStateOf(day) }
     var timed by remember { mutableStateOf(time != null) }
     val now = remember { java.time.LocalTime.now() }
     val clock = rememberTimePickerState(time?.substringBefore(":")?.toIntOrNull() ?: now.hour, time?.substringAfter(":")?.toIntOrNull() ?: now.minute, true)
     AlertDialog(
         onDismissRequest = onDismiss, title = { Text("每周截止时间") },
-        text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+        text = { Column(Modifier.verticalScroll(rememberScrollState()).appleContentSize()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(selected == null, { selected = null }, label = { Text("不设置") })
                 listOf("一", "二", "三", "四", "五", "六", "日").forEachIndexed { index, label ->
                     FilterChip(selected == index + 1, { selected = index + 1 }, label = { Text("周$label") }, modifier = Modifier.testTag("weekday:${index + 1}"))
                 }
             }
-            if (selected != null) {
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Text("具体时间", Modifier.weight(1f))
-                    Switch(timed, { timed = it })
+            AnimatedVisibility(
+                visible = selected != null,
+                enter = TaskraMotion.expandEnter(reduced),
+                exit = TaskraMotion.collapseExit(reduced),
+            ) {
+                Column {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text("具体时间", Modifier.weight(1f))
+                        Switch(timed, { timed = it })
+                    }
+                    AnimatedVisibility(
+                        visible = timed,
+                        enter = TaskraMotion.expandEnter(reduced),
+                        exit = TaskraMotion.collapseExit(reduced),
+                    ) {
+                        TimeInput(clock)
+                    }
                 }
-                if (timed) TimeInput(clock)
             }
         } },
         confirmButton = { TextButton(modifier = Modifier.testTag("weekly_confirm"), onClick = {
