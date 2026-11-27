@@ -1,3 +1,9 @@
+# v1.0.5 应用内更新多源加速与真机实测（2026-11-27）
+
+- **问题修复**：针对国内网络直连 GitHub 下载 APK 超时报错（`timeout`），将 `AppUpdater` 改造为「官网 Cloudflare Pages（`https://taskra.chengyi.me/version.json` 与同源 APK）优先、失败自动回退 GitHub Releases」双源链路，新增单源失败重试与 HTTP `Range` 断点续传、整包 SHA-256/包名/签名校验、版本化资产优先匹配及中文错误提示；`app/build.gradle.kts` 改为预发布（`01..98`）与正式版（`99`）严格递增的 `versionCode` 规则（`1.0.5` 为 `599`）；`.github/workflows/release.yml` 在 `version.json` 中补充精确字节数 `size`。
+- **构建、单测与线上验证**：`:app:testDebugUnitTest`（新增 `AppUpdaterTest` 官网双源解析与版本化资产优先用例）、`:app:assembleDebug`、`:app:assembleRelease`（含 `lintVitalRelease`）全部通过；推送 `v1.0.5` 后 GitHub Actions `build-release` 与 `deploy-pages` 均成功，`https://taskra.chengyi.me/version.json` 实测返回 `v1.0.5` 及完整 `sha256`、`size`。
+- **真机端到端实测**：在红米 K70（`7bd20440`）升级前导出并校验最新 v4 备份（30.8 MB），先在隔离模拟器 `emulator-5554` 演练同签名覆盖升级通过；随后在红米 K70 上以同签名 `v1.0.5-rc.1`（`501`）实测应用内自动检出 `v1.0.5`、从官网 CDN 完整下载 14.4 MB 安装包、通过 SHA-256 与签名校验并拉起澎湃 OS 系统安装器升级至正式版 `v1.0.5`（`599`），冷启动正常且原有 11 项待办、课程与自励便签完好无损。
+
 # v1.0.4 动效与交互体验升级验证（2026-11-25）
 
 - **动效体系与真机性能**：新增统一动效系统 `ui/motion/Motion.kt`（弹簧/曲线规范、`Modifier.Node` 按压触感、`LocalReduceMotion` 实时监听、滚动数字与错误微震），重写 `notebookPaper()` 离屏 GPU 贴图缓存、`TileDismiss` 单次离屏捕获纸片消散、`DragOrder` 非拖动零布局订阅及悬浮底部栏转场。在隔离调试包 `com.taskra.debug` 上实测实体机（vivo `V1965A`，Mali GPU）：36 张卡片列表滚动 `slow_draw = 0`（`p50 = 9.39ms, p90 = 15.70ms`），完成消散掉帧率由 `46.73%` 降至 `20.18%`（`p50` 由 `23.81ms` 降至 `13.41ms`）。

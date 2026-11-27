@@ -14,7 +14,7 @@ app/src/main/java/com/taskra/
   data/                  Room 实体·DAO·Repository·备份(v4)·图片/录音存储·偏好·课程模板
   reminders/             提醒规划（ReminderPlan）、系统闹钟（AlarmManager）与通知（HomeworkReminders）
   sync/                  设备配对、同步日志、冲突判定、附件传输与局域网连接
-  update/                GitHub Release 检查、SHA-256 流式校验下载与系统安装器调起（AppUpdater）
+  update/                官网 CDN 优先 + GitHub 回退检查、断点续传校验下载与安装器调起（AppUpdater）
   util/                  时间工具（含可注入时钟）、排序、标题生成、富文本、编辑器文档、主线程投递
   ui/
     AppViewModel.kt      全局偏好流、待办筛选状态、手动排序持久化、完成快照与可撤销软删除
