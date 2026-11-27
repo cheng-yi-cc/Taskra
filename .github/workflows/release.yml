@@ -151,6 +151,7 @@ jobs:
           cp "dist/taskra-${TAG}.apk.sha256" deploy/ 2>/dev/null || true
           DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           SHA="$(cut -d ' ' -f1 < "dist/taskra-${TAG}.apk.sha256" 2>/dev/null || true)"
+          SIZE="$(stat -c%s "dist/taskra-${TAG}.apk" 2>/dev/null || echo 0)"
           cat > deploy/version.json <<EOF
           {
             "version": "${TAG}",
@@ -158,6 +159,7 @@ jobs:
             "latest": "taskra-latest.apk",
             "githubApk": "https://github.com/${REPO}/releases/download/${TAG}/taskra-${TAG}.apk",
             "sha256": "${SHA}",
+            "size": ${SIZE},
             "updated": "${DATE}",
             "releaseUrl": "https://github.com/${REPO}/releases/tag/${TAG}"
           }

@@ -10,7 +10,7 @@
 
 | 组件 | 版本 |
 |---|---|
-| 应用版本 | `1.0.4`（`versionCode = 5`） |
+| 应用版本 | `1.0.5`（`versionCode = 599`） |
 | Gradle Wrapper / 本地 Gradle | 8.7 |
 | Android Gradle Plugin | 8.5.2 |
 | Kotlin | 2.0.20（compose 插件同版本） |
@@ -57,7 +57,7 @@ cd "D:\My Project\Taskra"
 ## 发版、官网与应用内更新（Release + taskra.chengyi.me）
 
 - **打 tag 自动构建与发版**：推送 `v*` 标签（如 `v1.0.2`）后，`.github/workflows/release.yml` 自动将标签注入 `TASKRA_VERSION`（自动派生 `versionName` 与递增 `versionCode`）并用正式签名构建 `:app:assembleRelease`，上传 `taskra-${TAG}.apk`、`taskra-latest.apk` 与 `taskra-${TAG}.apk.sha256` 到 GitHub Releases，同时把 `site/` 连同安装包与 `version.json` 部署到 Cloudflare Pages 生产环境（`--branch=main`，域名 https://taskra.chengyi.me）。
-- **应用内检查更新**：进程启动（开屏动画结束后）后台静默检查一次 GitHub Releases Latest，设置页「版本与更新」卡片亦支持随时手动点击检查。发现新版本后支持应用内流式下载 APK（带进度条与 SHA-256 完整性校验），校验通过后经 `FileProvider` 直接调起系统安装器（首次未授权「安装未知应用」时引导跳转授权，返回后自动续装；同时支持「忽略此版本」与浏览器下载兜底）。
+- **应用内检查更新**：进程启动（开屏动画结束后）后台静默检查一次，设置页「版本与更新」卡片亦支持随时手动点击检查。优先直连官网 Cloudflare Pages（`https://taskra.chengyi.me/version.json` 与同源 APK），失败时自动回退至 GitHub Releases Latest API，下载过程支持失败重试与 HTTP Range 断点续传，并执行完整的 SHA-256、包名与签名校验；校验通过后经 `FileProvider` 直接调起系统安装器（首次未授权「安装未知应用」时引导跳转授权，返回后自动续装；同时支持「忽略此版本」与官网浏览器下载兜底）。
 - **官网独立更新**：当 `main` 分支仅修改 `site/**` 时，工作流自动拉取最新 GitHub Release 的 APK 与校验值同步部署至 Cloudflare Pages，避免重新编译导致 SHA-256 不一致。
 - **本地签名配置**：复制 `keystore.properties.example` 为 `keystore.properties` 后填写（已进 `.gitignore`）；CI 从 GitHub Secrets 读取 `ANDROID_KEYSTORE_BASE64` 等同名环境变量。
 - **官网源码与本地预览**：源码位于 `site/`（纯静态：`index.html` + `styles.css` + `app.js` + `favicon.svg` + `version.json`），采用与新应用一致的方格纸 + 霞鹜文楷手账风格，启动时双源校验同源 `version.json` 与 GitHub Releases Latest API。本地预览可直接运行：

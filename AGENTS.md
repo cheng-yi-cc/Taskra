@@ -75,4 +75,4 @@ UI 测试仅在隔离模拟器运行；`connectedDebugAndroidTest` 可能操作�
 
 - `app/build.gradle.kts` 支持从环境变量 `TASKRA_VERSION` / `TAG` 自动推导 `versionName` 与递增 `versionCode`；发版时同步更新默认版本号，保证旧版可无损覆盖升级。
 - `.github/workflows/release.yml` 部署 Cloudflare Pages 必须显式传 `--branch=main`，并同时发布 `taskra-${TAG}.apk`、`taskra-latest.apk` 与 `.sha256`。
-- 应用内更新（`update/AppUpdater.kt`）直连 GitHub Releases Latest API，下载 APK 后必须验证 SHA-256、包名与签名才经 `FileProvider` 调起安装器；忽略版本仅保存在设备本地。
+- 应用内更新（`update/AppUpdater.kt`）优先使用官网 Cloudflare Pages（`https://taskra.chengyi.me/version.json` 与同源 APK），失败自动回退 GitHub Releases Latest API，支持 HTTP Range 断点续传与失败重试；下载 APK 后必须验证 SHA-256、包名与签名才经 `FileProvider` 调起安装器；忽略版本仅保存在设备本地。

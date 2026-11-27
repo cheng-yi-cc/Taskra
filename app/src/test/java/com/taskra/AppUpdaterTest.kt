@@ -82,4 +82,74 @@ class AppUpdaterTest {
         """.trimIndent()
         assertNull(ReleaseVersionParser.parseReleaseJson(draftJson, currentVersion = "1.0.0"))
     }
+
+    @Test
+    fun parseOfficialVersionJsonPrioritizesCloudflareMirrorWithGitHubFallback() {
+        val sampleSha = "36140d6f2da762483e11fe16fed952f2abba555647133cebd2998e8e84edb7c2"
+        val json = """
+            {
+              "version": "v1.0.5",
+              "apk": "taskra-v1.0.5.apk",
+              "latest": "taskra-latest.apk",
+              "githubApk": "https://github.com/cheng-yi-cc/Taskra/releases/download/v1.0.5/taskra-v1.0.5.apk",
+              "sha256": "$sampleSha",
+              "size": 15032686,
+              "updated": "2026-11-27T13:30:00Z",
+              "releaseUrl": "https://github.com/cheng-yi-cc/Taskra/releases/tag/v1.0.5"
+            }
+        """.trimIndent()
+
+        val info = ReleaseVersionParser.parseOfficialVersionJson(json, currentVersion = "1.0.4-rc.1")
+        assertNotNull(info)
+        assertEquals("v1.0.5", info!!.tagName)
+        assertEquals("1.0.5", info.versionName)
+        assertEquals("taskra-v1.0.5.apk", info.apkName)
+        assertEquals(15032686L, info.apkSizeBytes)
+        assertEquals(sampleSha, info.sha256)
+        assertEquals(
+            listOf(
+                "https://taskra.chengyi.me/taskra-v1.0.5.apk",
+                "https://github.com/cheng-yi-cc/Taskra/releases/download/v1.0.5/taskra-v1.0.5.apk",
+            ),
+            info.apkUrls,
+        )
+        assertNull(ReleaseVersionParser.parseOfficialVersionJson(json, currentVersion = "1.0.5"))
+    }
+
+    @Test
+    fun parseReleaseJsonPrefersVersionedApkOverLatestAndAddsOfficialMirror() {
+        val json = """
+            {
+              "tag_name": "v1.0.5",
+              "name": "v1.0.5",
+              "body": "修复更新超时",
+              "html_url": "https://github.com/cheng-yi-cc/Taskra/releases/tag/v1.0.5",
+              "draft": false,
+              "prerelease": false,
+              "assets": [
+                {
+                  "name": "taskra-latest.apk",
+                  "browser_download_url": "https://github.com/cheng-yi-cc/Taskra/releases/download/v1.0.5/taskra-latest.apk",
+                  "size": 15032686
+                },
+                {
+                  "name": "taskra-v1.0.5.apk",
+                  "browser_download_url": "https://github.com/cheng-yi-cc/Taskra/releases/download/v1.0.5/taskra-v1.0.5.apk",
+                  "size": 15032686
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val info = ReleaseVersionParser.parseReleaseJson(json, currentVersion = "1.0.4")
+        assertNotNull(info)
+        assertEquals("taskra-v1.0.5.apk", info!!.apkName)
+        assertEquals(
+            listOf(
+                "https://taskra.chengyi.me/taskra-v1.0.5.apk",
+                "https://github.com/cheng-yi-cc/Taskra/releases/download/v1.0.5/taskra-v1.0.5.apk",
+            ),
+            info.apkUrls,
+        )
+    }
 }

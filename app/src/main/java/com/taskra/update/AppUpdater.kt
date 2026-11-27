@@ -52,9 +52,13 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 import java.security.MessageDigest
+import javax.net.ssl.SSLException
 import kotlin.coroutines.coroutineContext
 
 @Serializable
@@ -76,6 +80,19 @@ internal data class GitHubAssetDto(
     val digest: String? = null,
 )
 
+@Serializable
+internal data class OfficialVersionDto(
+    val version: String = "",
+    val apk: String = "",
+    val latest: String = "",
+    val githubApk: String = "",
+    val sha256: String = "",
+    val size: Long = 0L,
+    val notes: String = "",
+    val updated: String = "",
+    val releaseUrl: String = "",
+)
+
 data class ReleaseUpdateInfo(
     val tagName: String,
     val versionName: String,
@@ -83,6 +100,7 @@ data class ReleaseUpdateInfo(
     val notes: String,
     val apkName: String,
     val apkUrl: String,
+    val apkUrls: List<String> = listOf(apkUrl),
     val apkSizeBytes: Long,
     val sha256: String?,
     val sha256AssetUrl: String?,
@@ -152,13 +170,59 @@ object ReleaseVersionParser {
         return sha256Regex.find(cleaned)?.groupValues?.get(1)?.lowercase()
     }
 
+    fun parseOfficialVersionJson(rawJson: String, currentVersion: String): ReleaseUpdateInfo? {
+        val dto = runCatching { json.decodeFromString<OfficialVersionDto>(rawJson) }.getOrNull() ?: return null
+        val versionName = normalizeVersion(dto.version)
+        if (versionName.isEmpty() || versionName.contains('-')) return null
+        if (!isNewerVersion(currentVersion, versionName)) return null
+
+        val tagName = dto.version.trim().ifBlank { "v$versionName" }
+        val defaultApkName = "taskra-$tagName.apk"
+        val primaryRaw = dto.apk.trim().ifBlank { dto.latest.trim() }.ifBlank { defaultApkName }
+        val primaryUrl = resolveOfficialUrl(primaryRaw)
+        val githubUrl = dto.githubApk.trim().ifBlank {
+            "https://github.com/cheng-yi-cc/Taskra/releases/download/$tagName/$defaultApkName"
+        }
+        val urls = buildList {
+            if (primaryUrl.isNotBlank()) add(primaryUrl)
+            if (githubUrl.isNotBlank() && githubUrl != primaryUrl) add(githubUrl)
+        }
+        if (urls.isEmpty()) return null
+
+        val apkName = primaryRaw.substringAfterLast('/').substringBefore('?').takeIf {
+            it.endsWith(".apk", ignoreCase = true) && !it.equals("taskra-latest.apk", ignoreCase = true)
+        } ?: defaultApkName
+
+        return ReleaseUpdateInfo(
+            tagName = tagName,
+            versionName = versionName,
+            title = "Taskra $tagName",
+            notes = dto.notes.trim(),
+            apkName = apkName,
+            apkUrl = urls.first(),
+            apkUrls = urls,
+            apkSizeBytes = dto.size.coerceAtLeast(0L),
+            sha256 = extractSha256Hex(dto.sha256),
+            sha256AssetUrl = resolveOfficialUrl("$defaultApkName.sha256"),
+            htmlUrl = OFFICIAL_SITE_BASE,
+        )
+    }
+
     fun parseReleaseJson(rawJson: String, currentVersion: String): ReleaseUpdateInfo? {
         val dto = runCatching { json.decodeFromString<GitHubReleaseDto>(rawJson) }.getOrNull() ?: return null
         if (dto.draft || dto.prerelease) return null
         val versionName = normalizeVersion(dto.tagName)
         if (!isNewerVersion(currentVersion, versionName)) return null
 
+        val tagName = dto.tagName.ifBlank { "v$versionName" }
+        val exactName = "taskra-$tagName.apk"
         val apkAsset = dto.assets.firstOrNull {
+            it.name.equals(exactName, ignoreCase = true) && it.browserDownloadUrl.isNotBlank()
+        } ?: dto.assets.firstOrNull {
+            it.name.endsWith(".apk", ignoreCase = true) &&
+                !it.name.equals("taskra-latest.apk", ignoreCase = true) &&
+                it.browserDownloadUrl.isNotBlank()
+        } ?: dto.assets.firstOrNull {
             it.name.endsWith(".apk", ignoreCase = true) && it.browserDownloadUrl.isNotBlank()
         } ?: return null
 
@@ -168,22 +232,46 @@ object ReleaseVersionParser {
         }
         val directSha = extractSha256Hex(apkAsset.digest) ?: extractSha256Hex(dto.body)
 
+        val mirrorUrl = if (apkAsset.name.startsWith("taskra-", ignoreCase = true)) {
+            resolveOfficialUrl(apkAsset.name)
+        } else {
+            ""
+        }
+        val urls = buildList {
+            if (mirrorUrl.isNotBlank()) add(mirrorUrl)
+            if (apkAsset.browserDownloadUrl.isNotBlank() && apkAsset.browserDownloadUrl != mirrorUrl) {
+                add(apkAsset.browserDownloadUrl)
+            }
+        }
+
         return ReleaseUpdateInfo(
-            tagName = dto.tagName.ifBlank { "v$versionName" },
+            tagName = tagName,
             versionName = versionName,
-            title = dto.name.ifBlank { dto.tagName.ifBlank { "v$versionName" } },
+            title = dto.name.ifBlank { tagName },
             notes = dto.body.trim(),
             apkName = apkAsset.name,
-            apkUrl = apkAsset.browserDownloadUrl,
+            apkUrl = urls.first(),
+            apkUrls = urls,
             apkSizeBytes = apkAsset.size,
             sha256 = directSha,
             sha256AssetUrl = shaAsset?.browserDownloadUrl?.ifBlank { null },
-            htmlUrl = dto.htmlUrl.ifBlank { FALLBACK_RELEASES_PAGE },
+            htmlUrl = OFFICIAL_SITE_BASE,
         )
     }
 
+    internal fun resolveOfficialUrl(pathOrUrl: String): String {
+        val trimmed = pathOrUrl.trim()
+        if (trimmed.isEmpty()) return ""
+        if (trimmed.startsWith("https://", ignoreCase = true) || trimmed.startsWith("http://", ignoreCase = true)) {
+            return trimmed
+        }
+        return OFFICIAL_SITE_BASE + trimmed.trimStart('/')
+    }
+
+    const val OFFICIAL_SITE_BASE = "https://taskra.chengyi.me/"
+    const val OFFICIAL_VERSION_JSON = "https://taskra.chengyi.me/version.json"
     const val LATEST_RELEASE_API = "https://api.github.com/repos/cheng-yi-cc/Taskra/releases/latest"
-    const val FALLBACK_RELEASES_PAGE = "https://github.com/cheng-yi-cc/Taskra/releases"
+    const val FALLBACK_RELEASES_PAGE = OFFICIAL_SITE_BASE
 }
 
 class AppUpdater(private val app: TaskraApp) {
@@ -211,7 +299,7 @@ class AppUpdater(private val app: TaskraApp) {
         autoCheckedThisSession = true
         scope.launch {
             cleanObsoleteApks(keepFileName = null)
-            val result = withContext(Dispatchers.IO) { fetchLatestRelease() }
+            val result = withContext(Dispatchers.IO) { fetchLatestRelease(preferSecondaryCheck = false) }
             val info = result.getOrNull() ?: return@launch
             cleanObsoleteApks(keepFileName = info.apkName)
             val ignored = runCatching { app.prefs.getIgnoredUpdateVersion() }.getOrNull()
@@ -234,7 +322,7 @@ class AppUpdater(private val app: TaskraApp) {
         if (_state.value.checking) return
         _state.update { it.copy(checking = true) }
         scope.launch {
-            val result = withContext(Dispatchers.IO) { fetchLatestRelease() }
+            val result = withContext(Dispatchers.IO) { fetchLatestRelease(preferSecondaryCheck = true) }
             _state.update { it.copy(checking = false) }
             result.fold(
                 onSuccess = { info ->
@@ -408,19 +496,65 @@ class AppUpdater(private val app: TaskraApp) {
         }
     }
 
-    private fun fetchLatestRelease(): Result<ReleaseUpdateInfo?> = runCatching {
-        val conn = openGitHubConnection(ReleaseVersionParser.LATEST_RELEASE_API, acceptJson = true)
+    private fun fetchLatestRelease(preferSecondaryCheck: Boolean): Result<ReleaseUpdateInfo?> {
+        val officialResult = runCatching { fetchOfficialVersionJson() }
+        if (officialResult.isSuccess) {
+            val officialInfo = officialResult.getOrNull()
+            if (officialInfo != null) {
+                return Result.success(officialInfo)
+            }
+            if (preferSecondaryCheck) {
+                val ghInfo = runCatching { fetchGitHubLatestRelease(connectTimeoutMs = 6_000, readTimeoutMs = 8_000) }.getOrNull()
+                if (ghInfo != null) return Result.success(ghInfo)
+            }
+            return Result.success(null)
+        }
+
+        val githubResult = runCatching { fetchGitHubLatestRelease(connectTimeoutMs = 12_000, readTimeoutMs = 18_000) }
+        if (githubResult.isSuccess) {
+            return githubResult
+        }
+
+        val err = officialResult.exceptionOrNull() ?: githubResult.exceptionOrNull()
+        return Result.failure(IOException(formatNetworkError(err, isDownload = false), err))
+    }
+
+    private fun fetchOfficialVersionJson(): ReleaseUpdateInfo? {
+        val conn = openConnection(
+            urlString = ReleaseVersionParser.OFFICIAL_VERSION_JSON,
+            acceptJson = true,
+            connectTimeoutMs = 10_000,
+            readTimeoutMs = 15_000,
+        )
         try {
             val code = conn.responseCode
-            when (code) {
+            if (code != HttpURLConnection.HTTP_OK) {
+                throw IOException("官网版本检查失败（HTTP $code）")
+            }
+            val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            return ReleaseVersionParser.parseOfficialVersionJson(body, currentVersionName)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun fetchGitHubLatestRelease(
+        connectTimeoutMs: Int = 15_000,
+        readTimeoutMs: Int = 20_000,
+    ): ReleaseUpdateInfo? {
+        val conn = openConnection(
+            urlString = ReleaseVersionParser.LATEST_RELEASE_API,
+            acceptJson = true,
+            connectTimeoutMs = connectTimeoutMs,
+            readTimeoutMs = readTimeoutMs,
+        )
+        try {
+            return when (val code = conn.responseCode) {
                 HttpURLConnection.HTTP_OK -> {
                     val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                     ReleaseVersionParser.parseReleaseJson(body, currentVersionName)
                 }
-                HttpURLConnection.HTTP_NOT_FOUND -> {
-                    // 仓库尚未发布任何 Release 时 GitHub API 返回 404，视为当前已是最新
-                    null
-                }
+                HttpURLConnection.HTTP_NOT_FOUND -> null
                 HttpURLConnection.HTTP_FORBIDDEN, 429 -> {
                     throw IOException("GitHub 接口请求受限（HTTP $code），请稍后再试")
                 }
@@ -444,33 +578,113 @@ class AppUpdater(private val app: TaskraApp) {
             }
             targetFile.delete()
         }
-        if (partFile.exists()) partFile.delete()
 
-        val conn = openGitHubConnection(info.apkUrl, acceptJson = false)
+        val candidates = info.apkUrls.ifEmpty { listOf(info.apkUrl) }.distinct()
+        var lastError: Throwable? = null
+
+        for (candidateUrl in candidates) {
+            var attempt = 0
+            while (attempt < 2) {
+                attempt++
+                coroutineContext.ensureActive()
+                try {
+                    downloadFromUrlWithResume(
+                        urlString = candidateUrl,
+                        partFile = partFile,
+                        expectedSizeBytes = info.apkSizeBytes,
+                    )
+                    val actualSha256 = computeFileSha256(partFile)
+                    if (!expectedSha256.isNullOrBlank() && !actualSha256.equals(expectedSha256, ignoreCase = true)) {
+                        partFile.delete()
+                        throw IOException("安装包 SHA-256 校验未通过，已拦截安装")
+                    }
+                    if (!isValidApkFile(partFile)) {
+                        partFile.delete()
+                        throw IOException("下载的 APK 文件不完整或签名不匹配")
+                    }
+                    if (targetFile.exists()) targetFile.delete()
+                    if (!partFile.renameTo(targetFile)) {
+                        partFile.copyTo(targetFile, overwrite = true)
+                        partFile.delete()
+                    }
+                    return@runCatching targetFile
+                } catch (e: CancellationException) {
+                    if (partFile.exists()) partFile.delete()
+                    throw e
+                } catch (e: Throwable) {
+                    lastError = e
+                    val isVerificationFailure = e.message?.contains("校验") == true || e.message?.contains("签名") == true
+                    if (isVerificationFailure) break
+                }
+            }
+        }
+
+        throw IOException(formatNetworkError(lastError, isDownload = true), lastError)
+    }
+
+    private suspend fun downloadFromUrlWithResume(
+        urlString: String,
+        partFile: File,
+        expectedSizeBytes: Long,
+    ) {
+        var existingBytes = if (partFile.exists()) partFile.length() else 0L
+        if (expectedSizeBytes > 0L && existingBytes > expectedSizeBytes) {
+            partFile.delete()
+            existingBytes = 0L
+        }
+
+        val conn = openConnection(
+            urlString = urlString,
+            acceptJson = false,
+            connectTimeoutMs = 15_000,
+            readTimeoutMs = 45_000,
+            rangeStartBytes = existingBytes.takeIf { it > 0L },
+        )
         try {
             val code = conn.responseCode
+            if (code == 416 && existingBytes > 0L) {
+                partFile.delete()
+                throw IOException("续传偏移失效，需重新下载")
+            }
             if (code !in 200..299) {
                 throw IOException("下载失败（HTTP $code）")
             }
-            val totalBytes = conn.contentLengthLong.takeIf { it > 0L } ?: info.apkSizeBytes
-            val digest = MessageDigest.getInstance("SHA-256")
-            var downloaded = 0L
+            val contentType = conn.contentType.orEmpty().lowercase()
+            if (contentType.contains("text/html")) {
+                partFile.delete()
+                throw IOException("下载源返回了无效页面内容")
+            }
+
+            val isResume = (code == HttpURLConnection.HTTP_PARTIAL && existingBytes > 0L)
+            val contentLength = conn.contentLengthLong.takeIf { it > 0L } ?: -1L
+            val totalBytes = when {
+                isResume -> parseTotalBytesFromContentRange(conn.getHeaderField("Content-Range"))
+                    ?: if (contentLength > 0L) existingBytes + contentLength else expectedSizeBytes
+                contentLength > 0L -> contentLength
+                else -> expectedSizeBytes
+            }
+
+            var downloaded = if (isResume) existingBytes else 0L
             var lastEmitTime = 0L
+            if (downloaded > 0L) {
+                _state.update {
+                    it.copy(downloadState = UpdateDownloadState.Downloading(downloaded, totalBytes))
+                }
+            }
 
             conn.inputStream.buffered().use { input ->
-                FileOutputStream(partFile).use { output ->
-                    val buffer = ByteArray(16 * 1024)
+                FileOutputStream(partFile, isResume).use { output ->
+                    val buffer = ByteArray(32 * 1024)
                     while (true) {
                         coroutineContext.ensureActive()
                         val read = input.read(buffer)
                         if (read < 0) break
                         if (read == 0) continue
                         output.write(buffer, 0, read)
-                        digest.update(buffer, 0, read)
                         downloaded += read
 
                         val now = System.currentTimeMillis()
-                        if (now - lastEmitTime >= 80L || downloaded == totalBytes) {
+                        if (now - lastEmitTime >= 80L || (totalBytes > 0L && downloaded >= totalBytes)) {
                             lastEmitTime = now
                             _state.update {
                                 it.copy(downloadState = UpdateDownloadState.Downloading(downloaded, totalBytes))
@@ -481,31 +695,22 @@ class AppUpdater(private val app: TaskraApp) {
                 }
             }
 
-            val actualSha256 = digest.digest().joinToString("") { "%02x".format(it) }
-            if (!expectedSha256.isNullOrBlank() && !actualSha256.equals(expectedSha256, ignoreCase = true)) {
-                partFile.delete()
-                throw IOException("安装包 SHA-256 校验未通过，已拦截安装")
+            if (totalBytes > 0L && partFile.length() < totalBytes) {
+                throw IOException("下载连接中断（已下载 ${formatBytes(partFile.length())} / ${formatBytes(totalBytes)}）")
             }
-            if (!isValidApkFile(partFile)) {
-                partFile.delete()
-                throw IOException("下载的 APK 文件不完整或已损坏")
-            }
-            if (targetFile.exists()) targetFile.delete()
-            if (!partFile.renameTo(targetFile)) {
-                partFile.copyTo(targetFile, overwrite = true)
-                partFile.delete()
-            }
-            targetFile
-        } catch (e: Throwable) {
-            if (partFile.exists()) partFile.delete()
-            throw e
         } finally {
             conn.disconnect()
         }
     }
 
+    private fun parseTotalBytesFromContentRange(header: String?): Long? {
+        if (header.isNullOrBlank()) return null
+        val total = header.substringAfter('/', "").trim()
+        return total.toLongOrNull()?.takeIf { it > 0L }
+    }
+
     private fun fetchSha256Text(url: String): String? = runCatching {
-        val conn = openGitHubConnection(url, acceptJson = false)
+        val conn = openConnection(url, acceptJson = false, connectTimeoutMs = 10_000, readTimeoutMs = 15_000)
         try {
             if (conn.responseCode in 200..299) {
                 val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -519,7 +724,7 @@ class AppUpdater(private val app: TaskraApp) {
     private fun computeFileSha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().buffered().use { input ->
-            val buf = ByteArray(16 * 1024)
+            val buf = ByteArray(32 * 1024)
             while (true) {
                 val n = input.read(buf)
                 if (n <= 0) break
@@ -552,18 +757,29 @@ class AppUpdater(private val app: TaskraApp) {
         installed.isNotEmpty() && installed == signatures(archiveInfo)
     }.getOrDefault(false)
 
-    private fun openGitHubConnection(urlString: String, acceptJson: Boolean): HttpURLConnection {
+    private fun openConnection(
+        urlString: String,
+        acceptJson: Boolean,
+        connectTimeoutMs: Int = 15_000,
+        readTimeoutMs: Int = 30_000,
+        rangeStartBytes: Long? = null,
+    ): HttpURLConnection {
         var currentUrl = urlString
         var redirects = 0
-        while (redirects < 5) {
+        while (redirects < 8) {
             val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15_000
-                readTimeout = 30_000
-                instanceFollowRedirects = true
+                connectTimeout = connectTimeoutMs
+                readTimeout = readTimeoutMs
+                instanceFollowRedirects = false
+                useCaches = false
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", "Taskra-Android/$currentVersionName")
+                setRequestProperty("Cache-Control", "no-cache")
                 if (acceptJson) {
-                    setRequestProperty("Accept", "application/vnd.github+json")
+                    setRequestProperty("Accept", "application/vnd.github+json, application/json")
+                }
+                if (rangeStartBytes != null && rangeStartBytes > 0L) {
+                    setRequestProperty("Range", "bytes=$rangeStartBytes-")
                 }
             }
             val code = conn.responseCode
@@ -578,6 +794,23 @@ class AppUpdater(private val app: TaskraApp) {
             return conn
         }
         throw IOException("重定向次数过多")
+    }
+
+    private fun formatNetworkError(error: Throwable?, isDownload: Boolean): String {
+        val raw = error?.message.orEmpty()
+        return when {
+            error is SocketTimeoutException || raw.contains("timeout", ignoreCase = true) -> {
+                if (isDownload) "安装包下载超时，请重试或点击「浏览器下载」" else "检查更新超时，请检查网络连接后重试"
+            }
+            error is UnknownHostException || error is ConnectException -> {
+                if (isDownload) "无法连接下载服务器，请检查网络后重试" else "无法连接更新服务器，请检查网络连接"
+            }
+            error is SSLException -> {
+                "安全连接建立失败，请检查系统时间或网络环境"
+            }
+            raw.any { it.code > 127 } -> raw
+            else -> if (isDownload) "安装包下载失败，请重试或点击「浏览器下载」" else "检查更新失败，请检查网络连接"
+        }
     }
 }
 

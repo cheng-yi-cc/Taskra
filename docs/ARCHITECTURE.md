@@ -89,6 +89,6 @@ app/src/main/java/com/taskra/
 - **自动发版与版本注入流水线**：推送 `v*` 标签（如 `v1.0.2`）时，GitHub Actions 将标签传入 `TASKRA_VERSION` 环境变量（`app/build.gradle.kts` 自动解析语义化版本并计算单调递增的 `versionCode`），解密签名密钥构建 `:app:assembleRelease`，向 GitHub Releases 上传 `taskra-${TAG}.apk`、`taskra-latest.apk` 与 `taskra-${TAG}.apk.sha256`，随后打包 `site/` 并通过 Wrangler（显式指定 `--branch=main` 生产分支）部署至 Cloudflare Pages（`https://taskra.chengyi.me`）。
 - **官网独立更新与双源校验**：当 `main` 分支仅修改 `site/**` 或工作流文件时，跳过 Android 编译，直接拉取最新 GitHub Release 的安装包与 SHA-256 同步部署至 Cloudflare Pages；`site/app.js` 加载时并行请求同源 `version.json` 与 GitHub Releases Latest API，始终指向最新正式版 APK。
 - **应用内更新（`AppUpdater.kt`）**：
-  - 开屏动画结束后在后台静默检查一次 `https://api.github.com/repos/cheng-yi-cc/Taskra/releases/latest`（设置页「版本与更新」卡片亦支持随时手动触发）。
-  - 发现更高语义化版本时下载并校验 APK 的 SHA-256、包名及签名，校验通过后通过 `FileProvider` 调起系统安装器。
-  - 若 Android 8.0+ 尚未授予 `REQUEST_INSTALL_PACKAGES` 权限，引导跳转系统「安装未知应用」设置页，用户授权返回应用（`onResume`）时自动复用已校验缓存 APK 续装；同时支持「忽略此版本」与系统浏览器下载兜底。
+  - 开屏动画结束后在后台静默检查一次（设置页「版本与更新」卡片支持随时手动触发）：优先读取官网 Cloudflare Pages 的 `https://taskra.chengyi.me/version.json`，失败自动回退至 `https://api.github.com/repos/cheng-yi-cc/Taskra/releases/latest`；手动检查在官网显示已是最新时额外短超时复核 GitHub Releases。
+  - 发现更高语义化版本时，按「官网 CDN 优先 → GitHub Releases 兜底」顺序下载 APK，支持 HTTP Range 断点续传与失败重试，下载完成后校验整包 SHA-256、包名及签名，校验通过后通过 `FileProvider` 调起系统安装器。
+  - 若 Android 8.0+ 尚未授予 `REQUEST_INSTALL_PACKAGES` 权限，引导跳转系统「安装未知应用」设置页，用户授权返回应用（`onResume`）时自动复用已校验缓存 APK 续装；同时支持「忽略此版本」与官网浏览器下载兜底。
